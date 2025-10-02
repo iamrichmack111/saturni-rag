@@ -73,20 +73,22 @@ def retrieve(q, topk=3):
     D,I = index.search(qv, topk)
     return [docs[idx] for idx in I[0]]
 
-# --- Ollama LLM Answer ---
+# --- Ollama LLM Answer (with progress bar) ---
 def ollama_generate(prompt, model="gemma2:2b"):
     ensure_ollama_model(model)
     resp = requests.post("http://localhost:11434/api/generate",
         json={"model": model, "prompt": prompt}, stream=True)
     out = ""
-    for line in resp.iter_lines():
-        if line:
-            try:
-                data = json.loads(line.decode("utf-8"))
-                if "response" in data:
-                    out += data["response"]
-            except:
-                pass
+    with tqdm(desc="Generating answer", unit="chunk") as pbar:
+        for line in resp.iter_lines():
+            if line:
+                try:
+                    data = json.loads(line.decode("utf-8"))
+                    if "response" in data:
+                        out += data["response"]
+                        pbar.update(1)
+                except:
+                    pass
     return out.strip()
 
 def rag_answer(q, model="gemma2:2b"):
@@ -96,12 +98,13 @@ def rag_answer(q, model="gemma2:2b"):
     return ollama_generate(prompt, model=model)
 
 # --- CLI Modes ---
-def output_result(text, output_file=None):
-    print(colored("👉 " + text, "green"))
+def output_result(question, answer, output_file=None):
+    print(colored("👉 " + answer, "green"))
     if output_file:
-        with open(output_file, "w", encoding="utf8") as f:
-            f.write(text)
-        print(colored(f"💾 Saved output to {output_file}", "cyan"))
+        with open(output_file, "a", encoding="utf8") as f:  # append mode
+            f.write(f"❓ {question}\n")
+            f.write(f"👉 {answer}\n\n")
+        print(colored(f"💾 Appended Q&A to {output_file}", "cyan"))
 
 def repl(ai_model, output_file=None):
     print(colored(f"💬 Ask questions (AI model = {ai_model}, type 'exit' to quit)\n","magenta"))
@@ -109,16 +112,16 @@ def repl(ai_model, output_file=None):
         q = input(colored("❓ Ask> ", "blue"))
         if q.lower() in {"exit","quit"}: break
         ans = rag_answer(q, model=ai_model)
-        output_result(ans, output_file)
+        output_result(q, ans, output_file)
 
 if __name__=="__main__":
-    ap = argparse.ArgumentParser(description="📚 Saturni: FAISS RAG + Ollama AI with progress bar and output")
+    ap = argparse.ArgumentParser(description="📚 Saturni: FAISS RAG + Ollama AI with transcript logging")
     ap.add_argument("--index", action="store_true", help="Build FAISS index")
     ap.add_argument("--add", nargs="+", help="Add new .txt files")
     ap.add_argument("--repl", action="store_true", help="Interactive query mode")
     ap.add_argument("--query", type=str, help="One-shot query")
     ap.add_argument("--ai", type=str, default="gemma2:2b", help="Ollama model for answers (default gemma2:2b)")
-    ap.add_argument("-o", "--output", type=str, help="Save output to file")
+    ap.add_argument("-o", "--output", type=str, help="Append Q&A transcript to file")
     args = ap.parse_args()
 
     if args.index: build_index()
@@ -126,5 +129,5 @@ if __name__=="__main__":
     if args.repl: repl(args.ai, args.output)
     if args.query:
         ans = rag_answer(args.query, model=args.ai)
-        output_result(ans, args.output)
+        output_result(args.query, ans, args.output)
 
