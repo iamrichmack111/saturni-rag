@@ -1,6 +1,6 @@
 # Saturni RAG
 
-[![Version](https://img.shields.io/badge/version-1.0.0-6f42c1.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.1.0-6f42c1.svg)](CHANGELOG.md)
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776AB.svg?logo=python&logoColor=white)](https://www.python.org/)
 [![CI](https://github.com/iamrichmack111/saturni-rag/actions/workflows/ci.yml/badge.svg)](https://github.com/iamrichmack111/saturni-rag/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
