@@ -1,159 +1,361 @@
-Here’s a **README.md** draft and dependency list tailored for your Saturni RAG project.
-It includes install/setup steps, dependencies, usage examples, author credit, and the GitHub repo info you gave me.
-
----
-
-## 📦 Dependencies (add to `requirements.txt`)
-
-```txt
-faiss-cpu
-numpy
-requests
-pyfiglet
-termcolor
-tqdm
-```
-
-If you want to lock versions:
-
-```txt
-faiss-cpu==1.8.0
-numpy>=1.26
-requests>=2.31
-pyfiglet>=1.0.2
-termcolor>=2.4
-tqdm>=4.66
-```
-
----
-
-## 📜 README.md
-
-````markdown
 # Saturni RAG
 
-**Saturni** is a lightweight Retrieval-Augmented Generation (RAG) system designed for analyzing philosophy (and other texts).  
-It uses **Ollama** for embeddings and generation, **FAISS** for fast similarity search, and a colorful **CLI** with logging.
+[![Version](https://img.shields.io/badge/version-1.0.0-6f42c1.svg)](CHANGELOG.md)
+[![Python](https://img.shields.io/badge/python-3.10%2B-3776AB.svg?logo=python&logoColor=white)](https://www.python.org/)
+[![CI](https://github.com/iamrichmack111/saturni-rag/actions/workflows/ci.yml/badge.svg)](https://github.com/iamrichmack111/saturni-rag/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
----
+**Saturni RAG** is a local-first retrieval-augmented generation system for searching and analyzing books, notes, research, and other plain-text collections. It combines Ollama embeddings and local language models with a FAISS vector index so documents, retrieved passages, and generated answers remain on infrastructure you control.
 
-## ✨ Features
+![Saturni indexing 1,706 chunks from nine philosophy texts](docs/saturni-indexing.png)
 
-- 🚀 Build a FAISS index from local text files (`clean_pg*.txt` or `pg*.txt`)
-- 🔎 Retrieve relevant chunks and feed them into an Ollama model
-- 💬 Interactive REPL or one-shot query mode
-- 📥 Automatic `ollama pull` if a model isn’t installed
-- 📊 Progress bars for indexing and generation
-- 📝 Transcript logging with `-o` (append Q&A to a log file)
-- 🎨 Figlet banner + multicolored CLI output
+The example above prepares **1,706 overlapping chunks from nine philosophy texts** and embeds them in batches through Ollama.
 
----
+## Why Saturni
 
-## 📦 Dependencies
+Saturni demonstrates a complete local RAG pipeline rather than a basic chatbot wrapper:
 
-Install with pip:
+- Discovers individual text files or recursively scans directories.
+- Splits documents into overlapping chunks to preserve context.
+- Creates batched embeddings with Ollama and `nomic-embed-text`.
+- Normalizes vectors for cosine-similarity retrieval in FAISS.
+- Retrieves the most relevant passages for each question.
+- Generates grounded answers with numbered source references.
+- Detects unchanged documents with SHA-256 hashes during incremental updates.
+- Stores portable JSON metadata and performs atomic index writes.
+- Includes an installer, uninstaller, diagnostics, tests, linting, builds, and CI.
 
-```bash
-pip install -r requirements.txt
-````
+## Architecture
 
-Dependencies:
-
-* `faiss-cpu` – vector search
-* `numpy` – numerical arrays
-* `requests` – HTTP calls to Ollama
-* `pyfiglet` – ASCII art banner
-* `termcolor` – colored terminal output
-* `tqdm` – progress bars
-
----
-
-## ⚙️ Setup
-
-1. Install [Ollama](https://ollama.ai) and run it:
-
-   ```bash
-   ollama serve
-   ```
-
-2. Clone this repo:
-
-   ```bash
-   git clone git@github.com:iamrichmack111/saturni-rag.git
-   cd saturni-rag
-   ```
-
-3. Install dependencies:
-
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-4. Place your philosophy texts into the repo directory.
-   They should be named either `pg1234.txt` or `clean_pg1234.txt`.
-
----
-
-## 🔑 Usage
-
-### Build the index
-
-```bash
-./saturni.py --index
+```text
+Plain-text documents
+        │
+        ▼
+Overlapping word chunks
+        │
+        ▼
+Ollama embedding model
+        │
+        ▼
+Normalized vectors ───────────────► FAISS index
+                                        │
+Question ─► query embedding ─► top-k retrieval
+                                        │
+                                        ▼
+                            Retrieved source passages
+                                        │
+                                        ▼
+                              Ollama language model
+                                        │
+                                        ▼
+                         Grounded answer + source list
 ```
 
-### Add new texts
+## Requirements
+
+- Linux or macOS
+- Python 3.10 or newer
+- Ollama installed and running
+- Enough storage for the selected Ollama models and generated index
+
+Start Ollama before indexing or asking questions:
 
 ```bash
-./saturni.py --add clean_pg9999.txt
+ollama serve
 ```
 
-### Query interactively (with logging)
+## Installation
+
+Clone the repository and run the isolated installer:
 
 ```bash
-./saturni.py --repl --ai gemma2:2b -o session.log
+git clone https://github.com/iamrichmack111/saturni-rag.git
+cd saturni-rag
+./install.sh --pull-models
 ```
 
-### One-shot query
+The installer:
+
+- creates a virtual environment at `~/.local/share/saturni-rag/venv`;
+- installs Saturni and its Python dependencies;
+- creates `saturni` and `saturni-rag` commands in `~/.local/bin`;
+- optionally pulls `nomic-embed-text` and `gemma2:2b`;
+- does not require `sudo`.
+
+Add the user command directory to your shell when necessary:
 
 ```bash
-./saturni.py --query "Summarize Nietzsche’s Beyond Good and Evil" --ai mistral:7b -o output.log
+export PATH="$HOME/.local/bin:$PATH"
+hash -r
 ```
 
-Output is both printed to screen and appended to the log.
+Verify the installation:
 
----
-
-## 📂 File structure
-
+```bash
+saturni --version
+saturni doctor
 ```
+
+A missing vector index is expected before the first indexing run. All other diagnostics should pass.
+
+## Quick start
+
+### 1. Build an index
+
+Index the philosophy texts included in the repository:
+
+```bash
+saturni index --force clean_pg*.txt
+```
+
+Index a separate document directory:
+
+```bash
+saturni index --force "$HOME/Documents/philosophy"
+```
+
+Saturni defaults to 500-word chunks, 75-word overlap, and embedding batches of 16.
+
+### 2. Ask a grounded question
+
+```bash
+saturni ask \
+  "How do these authors describe virtue and self-mastery?" \
+  --show-sources
+```
+
+### 3. Start an interactive research session
+
+```bash
+saturni repl \
+  --model gemma2:2b \
+  --show-sources \
+  -o saturni-session.log
+```
+
+Type `exit` or `quit` to close the REPL.
+
+### 4. Add documents incrementally
+
+```bash
+saturni add "$HOME/Documents/philosophy/new-book.txt"
+```
+
+Unchanged documents are skipped using their SHA-256 hashes.
+
+## Commands
+
+```text
+saturni index [PATH ...]   Build or replace a FAISS index
+saturni add PATH [...]     Add changed or new documents
+saturni ask QUESTION       Ask one grounded question
+saturni repl               Open the interactive question loop
+saturni pull MODEL         Download an Ollama model
+saturni doctor             Check Python, packages, Ollama, and storage
+```
+
+Display command-specific options:
+
+```bash
+saturni --help
+saturni index --help
+saturni ask --help
+saturni repl --help
+```
+
+## Useful examples
+
+Use a different generation model:
+
+```bash
+saturni ask \
+  "Compare Plato and Nietzsche on morality." \
+  --model qwen2.5:3b \
+  --show-sources
+```
+
+Retrieve five passages instead of three:
+
+```bash
+saturni ask \
+  "What themes recur across the collection?" \
+  --top-k 5 \
+  --show-sources
+```
+
+Create smaller chunks with additional overlap:
+
+```bash
+saturni index --force \
+  --chunk-size 350 \
+  --overlap 100 \
+  clean_pg*.txt
+```
+
+Use a remote Ollama server:
+
+```bash
+saturni ask \
+  "Summarize the retrieved argument." \
+  --ollama-url http://192.168.1.50:11434
+```
+
+Save a transcript:
+
+```bash
+saturni ask \
+  "How is discipline connected to freedom?" \
+  --show-sources \
+  -o research.log
+```
+
+## Defaults
+
+| Setting | Default |
+|---|---:|
+| Embedding model | `nomic-embed-text` |
+| Generation model | `gemma2:2b` |
+| Chunk size | 500 words |
+| Chunk overlap | 75 words |
+| Embedding batch size | 16 |
+| Retrieved passages | 3 |
+| Ollama URL | `http://127.0.0.1:11434` |
+| HTTP timeout | 120 seconds |
+
+Every major setting can be overridden from the command line.
+
+## Data and privacy
+
+Generated data is stored outside the Git repository by default:
+
+```text
+~/.local/share/saturni-rag/data/books.faiss
+~/.local/share/saturni-rag/data/metadata.json
+```
+
+Change the location with `SATURNI_HOME`, `XDG_DATA_HOME`, or `--data-dir`.
+
+Saturni sends document chunks and questions only to the Ollama server configured by `--ollama-url` or `OLLAMA_HOST`. With the default local Ollama configuration, the RAG workflow does not require a hosted model API.
+
+## Legacy command compatibility
+
+The original command flags remain available:
+
+```bash
+saturni --index
+saturni --query "What is Faust about?" --ai gemma2:2b
+saturni --repl --ai gemma2:2b -o session.log
+```
+
+New projects should use the subcommand interface shown above.
+
+## Troubleshooting
+
+### `FAIL Vector index` in `saturni doctor`
+
+Create the first index:
+
+```bash
+saturni index --force clean_pg*.txt
+saturni doctor
+```
+
+### Ollama is not reachable
+
+Confirm the service is running:
+
+```bash
+ollama serve
+```
+
+Then check the API:
+
+```bash
+curl http://127.0.0.1:11434/api/tags
+```
+
+### A required model is missing
+
+```bash
+saturni pull nomic-embed-text
+saturni pull gemma2:2b
+```
+
+### `saturni: command not found`
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+hash -r
+```
+
+Add the export line to `~/.bashrc` or `~/.zshrc` to make it permanent.
+
+## Development
+
+Create an editable development environment:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -e '.[dev]'
+```
+
+Run the quality checks:
+
+```bash
+ruff check .
+pytest
+python -m build
+```
+
+GitHub Actions runs linting, tests, and package builds against Python 3.10, 3.11, and 3.12.
+
+## Project structure
+
+```text
 saturni-rag/
-│── saturni.py         # main CLI
-│── books.faiss        # FAISS index (generated after --index)
-│── meta.pkl           # chunk metadata
-│── requirements.txt   # dependencies
-│── README.md          # this file
-│── clean_pg*.txt      # your philosophy texts
+├── .github/workflows/     # CI and release automation
+├── docs/                  # README images
+├── src/saturni_rag/
+│   ├── __init__.py        # package version
+│   ├── cli.py             # command-line interface
+│   └── core.py            # chunking, Ollama, FAISS, and retrieval
+├── tests/                 # automated tests
+├── install.sh             # isolated user installer
+├── uninstall.sh           # data-preserving uninstaller
+├── pyproject.toml         # package and tool configuration
+├── CHANGELOG.md
+├── CONTRIBUTING.md
+├── SECURITY.md
+└── LICENSE
 ```
 
----
+## Uninstall
 
-## 👤 Author
+Remove the application while preserving the generated index:
 
-* **Jeremy Franklin**
-* GitHub: [iamrichmack111](https://github.com/iamrichmack111)
-* Repo: [git@github.com:iamrichmack111/saturni-rag.git](git@github.com:iamrichmack111/saturni-rag.git)
-
----
-
-## 📜 License
-
-MIT License — feel free to modify and share.
-
+```bash
+~/.local/share/saturni-rag/uninstall.sh
 ```
 
----
+Remove the application and indexed data:
 
-
+```bash
+~/.local/share/saturni-rag/uninstall.sh --purge
 ```
 
+## Security and answer quality
+
+Retrieved documents are untrusted input. Saturni instructs the language model to answer from the selected passages, but generated answers may still be incomplete or incorrect. Review the displayed sources before relying on an answer for important research or decisions.
+
+Security reports should follow [SECURITY.md](SECURITY.md).
+
+## Author
+
+**Jeremy Franklin**  
+GitHub: [@iamrichmack111](https://github.com/iamrichmack111)
+
+## License
+
+Released under the [MIT License](LICENSE).
