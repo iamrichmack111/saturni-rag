@@ -1,0 +1,6 @@
+faiss-cpu>=1.8,<2
+numpy>=1.26,<3
+requests>=2.31,<3
+pyfiglet>=1.0.2,<2
+termcolor>=2.4,<4
+tqdm>=4.66,<5

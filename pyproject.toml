@@ -1,0 +1,70 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "saturni-rag"
+dynamic = ["version"]
+description = "A local-first retrieval-augmented generation CLI powered by Ollama and FAISS."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{name = "Jeremy Franklin"}]
+keywords = ["rag", "ollama", "faiss", "embeddings", "semantic-search", "cli"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Operating System :: MacOS",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+  "faiss-cpu>=1.8,<2",
+  "numpy>=1.26,<3",
+  "requests>=2.31,<3",
+  "pyfiglet>=1.0.2,<2",
+  "termcolor>=2.4,<4",
+  "tqdm>=4.66,<5",
+]
+
+[project.optional-dependencies]
+dev = [
+  "build>=1.2,<2",
+  "pytest>=8,<10",
+  "ruff>=0.8,<1",
+]
+
+[project.scripts]
+saturni = "saturni_rag.cli:main"
+saturni-rag = "saturni_rag.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/iamrichmack111/saturni-rag"
+Repository = "https://github.com/iamrichmack111/saturni-rag"
+Issues = "https://github.com/iamrichmack111/saturni-rag/issues"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.dynamic]
+version = {attr = "saturni_rag.__version__"}
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
