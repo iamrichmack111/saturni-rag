@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import os, glob, argparse, faiss, numpy as np, pickle, subprocess, requests, json
+import os, glob, argparse, faiss, numpy as np, pickle, subprocess, requests, json, re
 from pyfiglet import Figlet
 from termcolor import colored
 from tqdm import tqdm   # progress bar
@@ -173,24 +173,60 @@ def ollama_generate(prompt, model="gemma2:2b"):
                     pass
     return out.strip()
 
+def sanitize_citations(answer, valid_ids):
+    def replace(match):
+        citation_id = int(match.group(1))
+        return match.group(0) if citation_id in valid_ids else ""
+
+    return re.sub(r"\[CITE\s+(\d+)\]", replace, answer).strip()
+
+
+def format_sources(ctx):
+    lines = ["Sources:"]
+    for rank, (fname, _chunk, distance) in enumerate(ctx, start=1):
+        lines.append(
+            f"[CITE {rank}] {fname} | distance={distance:.4f}"
+        )
+    return "\n".join(lines)
+
+
 def rag_answer(q, model="gemma2:2b", max_distance=0.90):
     ctx = retrieve(q, topk=3, max_distance=max_distance)
 
     if not ctx:
         return "Not found in text."
 
-    context_text = "\n\n".join(
-        f"From {fname} [distance={distance:.4f}]:\n{chunk}"
-        for fname, chunk, distance in ctx
-    )
+    context_blocks = []
+    for rank, (fname, chunk, distance) in enumerate(ctx, start=1):
+        context_blocks.append(
+            f"[CITE {rank}]\n"
+            f"Source: {fname}\n"
+            f"Distance: {distance:.4f}\n"
+            f"{chunk}"
+        )
+
+    context_text = "\n\n".join(context_blocks)
 
     prompt = (
-        "Answer the question using only the context below. "
-        "If the context does not support the answer, say: Not found in text.\n\n"
-        f"Context:\n{context_text}\n\nQuestion: {q}\nAnswer:"
+        "You are Saturni, a retrieval-grounded assistant.\n"
+        "Answer only from the supplied context.\n"
+        "Use only citation identifiers that appear in the context, "
+        "such as [CITE 1] or [CITE 2].\n"
+        "Do not invent citation numbers.\n"
+        "Numbers such as [13] or [39] inside source text are original "
+        "source footnotes, not Saturni citations.\n"
+        "If the evidence does not support an answer, say: Not found in text.\n\n"
+        f"Context:\n{context_text}\n\n"
+        f"Question: {q}\n"
+        "Answer:"
     )
 
-    return ollama_generate(prompt, model=model)
+    answer = ollama_generate(prompt, model=model)
+
+    valid_ids = set(range(1, len(ctx) + 1))
+    answer = sanitize_citations(answer, valid_ids)
+
+    return f"{answer}\n\n{format_sources(ctx)}"
 
 # --- CLI Modes ---
 def output_result(question, answer, output_file=None):
