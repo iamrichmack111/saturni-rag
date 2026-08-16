@@ -53,19 +53,56 @@ def build_index():
     print(colored(f"✅ Indexed {len(docs)} chunks from {len(files)} files", "green"))
 
 def add_files(files):
-    index, docs = (faiss.read_index(INDEX_FILE), pickle.load(open(META_FILE,"rb"))) if os.path.exists(INDEX_FILE) else (None, [])
-    new_docs, new_vecs = [], []
+    if os.path.exists(INDEX_FILE) and os.path.exists(META_FILE):
+        docs = pickle.load(open(META_FILE, "rb"))
+    else:
+        docs = []
+
+    files = [os.path.abspath(f) for f in files]
+    names = {os.path.basename(f) for f in files}
+
+    retained_docs = [(fname, ch) for fname, ch in docs if fname not in names]
+    replaced = len(docs) - len(retained_docs)
+
+    new_docs = []
     for f in files:
-        with open(f, encoding="utf8", errors="ignore") as fh: txt = fh.read()
+        if not os.path.isfile(f):
+            raise FileNotFoundError(f"File not found: {f}")
+
+        with open(f, encoding="utf8", errors="ignore") as fh:
+            txt = fh.read()
+
         chunks = chunk_text(txt)
         for ch in tqdm(chunks, desc=f"Embedding {f}", unit="chunk"):
             new_docs.append((os.path.basename(f), ch))
-            new_vecs.append(embed(ch))
-    new_vecs = np.vstack(new_vecs).astype("float32")
-    if index is None: index = faiss.IndexFlatL2(new_vecs.shape[1])
-    index.add(new_vecs); docs.extend(new_docs)
-    faiss.write_index(index, INDEX_FILE); pickle.dump(docs, open(META_FILE,"wb"))
-    print(colored(f"✅ Added {len(new_docs)} chunks from {len(files)} files", "yellow"))
+
+    all_docs = retained_docs + new_docs
+
+    if not all_docs:
+        raise RuntimeError("No chunks available to index.")
+
+    vecs = []
+    for _, ch in tqdm(all_docs, desc="Rebuilding FAISS", unit="chunk"):
+        vecs.append(embed(ch))
+
+    vecs = np.vstack(vecs).astype("float32")
+    index = faiss.IndexFlatL2(vecs.shape[1])
+    index.add(vecs)
+
+    faiss.write_index(index, INDEX_FILE)
+    pickle.dump(all_docs, open(META_FILE, "wb"))
+
+    if replaced:
+        print(colored(
+            f"✅ Updated {len(files)} file(s): replaced {replaced} old chunks "
+            f"with {len(new_docs)} new chunks",
+            "yellow"
+        ))
+    else:
+        print(colored(
+            f"✅ Added {len(new_docs)} chunks from {len(files)} file(s)",
+            "yellow"
+        ))
 
 def retrieve(q, topk=3):
     index, docs = load_index()
