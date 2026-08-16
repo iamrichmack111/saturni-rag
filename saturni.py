@@ -140,20 +140,117 @@ def add_files(files):
             "yellow"
         ))
 
-def retrieve(q, topk=3, max_distance=0.90):
+def _cosine_similarity(a, b):
+    a = np.asarray(a, dtype="float32").reshape(-1)
+    b = np.asarray(b, dtype="float32").reshape(-1)
+
+    denom = np.linalg.norm(a) * np.linalg.norm(b)
+    if denom == 0:
+        return 0.0
+
+    return float(np.dot(a, b) / denom)
+
+
+def _mmr_select(index, candidates, topk=3, lambda_mult=0.70):
+    if not candidates:
+        return []
+
+    distances = [item["distance"] for item in candidates]
+    low = min(distances)
+    high = max(distances)
+    span = high - low if high != low else 1.0
+
+    for item in candidates:
+        item["relevance"] = 1.0 - ((item["distance"] - low) / span)
+        item["vector"] = index.reconstruct(item["idx"])
+
+    selected = []
+    remaining = list(candidates)
+
+    while remaining and len(selected) < topk:
+        if not selected:
+            best = max(remaining, key=lambda item: item["relevance"])
+        else:
+            def score(item):
+                redundancy = max(
+                    _cosine_similarity(item["vector"], chosen["vector"])
+                    for chosen in selected
+                )
+
+                same_source = any(
+                    item["fname"] == chosen["fname"]
+                    for chosen in selected
+                )
+
+                source_penalty = 0.15 if same_source else 0.0
+
+                return (
+                    lambda_mult * item["relevance"]
+                    - (1.0 - lambda_mult) * redundancy
+                    - source_penalty
+                )
+
+            best = max(remaining, key=score)
+
+        selected.append(best)
+        remaining.remove(best)
+
+    return selected
+
+
+def retrieve(
+    q,
+    topk=3,
+    max_distance=0.90,
+    strategy="dense",
+    fetch_k=12,
+    lambda_mult=0.70,
+):
     index, docs = load_index()
     qv = embed(q).astype("float32")
-    D, I = index.search(qv, topk)
 
-    results = []
+    candidate_count = max(topk, fetch_k) if strategy == "mmr" else topk
+    D, I = index.search(qv, candidate_count)
+
+    candidates = []
+
     for distance, idx in zip(D[0], I[0]):
         if idx < 0:
             continue
-        if float(distance) <= max_distance:
-            fname, chunk = docs[idx]
-            results.append((fname, chunk, float(distance)))
 
-    return results
+        distance = float(distance)
+
+        if distance > max_distance:
+            continue
+
+        fname, chunk = docs[idx]
+
+        candidates.append({
+            "idx": int(idx),
+            "fname": fname,
+            "chunk": chunk,
+            "distance": distance,
+        })
+
+    if strategy == "dense":
+        chosen = candidates[:topk]
+    elif strategy == "mmr":
+        chosen = _mmr_select(
+            index,
+            candidates,
+            topk=topk,
+            lambda_mult=lambda_mult,
+        )
+    else:
+        raise ValueError(
+            f"Unknown retrieval strategy: {strategy}. Use 'dense' or 'mmr'."
+        )
+
+    return [
+        (item["fname"], item["chunk"], item["distance"])
+        for item in chosen
+    ]
+
 
 # --- Ollama LLM Answer (with progress bar) ---
 def ollama_generate(prompt, model="gemma2:2b"):
@@ -190,8 +287,22 @@ def format_sources(ctx):
     return "\n".join(lines)
 
 
-def rag_answer(q, model="gemma2:2b", max_distance=0.90):
-    ctx = retrieve(q, topk=3, max_distance=max_distance)
+def rag_answer(
+    q,
+    model="gemma2:2b",
+    max_distance=0.90,
+    retrieval="mmr",
+    fetch_k=12,
+    lambda_mult=0.70,
+):
+    ctx = retrieve(
+        q,
+        topk=3,
+        max_distance=max_distance,
+        strategy=retrieval,
+        fetch_k=fetch_k,
+        lambda_mult=lambda_mult,
+    )
 
     if not ctx:
         return "Not found in text."
@@ -237,30 +348,115 @@ def output_result(question, answer, output_file=None):
             f.write(f"👉 {answer}\n\n")
         print(colored(f"💾 Appended Q&A to {output_file}", "cyan"))
 
-def repl(ai_model, output_file=None, max_distance=0.90):
-    print(colored(f"💬 Ask questions (AI model = {ai_model}, type 'exit' to quit)\n","magenta"))
+def repl(
+    ai_model,
+    output_file=None,
+    max_distance=0.90,
+    retrieval="mmr",
+    fetch_k=12,
+    lambda_mult=0.70,
+):
+    print(colored(
+        f"💬 Ask questions (AI model = {ai_model}, retrieval = {retrieval}, type 'exit' to quit)\\n",
+        "magenta"
+    ))
+
     while True:
         q = input(colored("❓ Ask> ", "blue"))
-        if q.lower() in {"exit","quit"}: break
-        ans = rag_answer(q, model=ai_model, max_distance=max_distance)
+
+        if q.lower() in {"exit", "quit"}:
+            break
+
+        ans = rag_answer(
+            q,
+            model=ai_model,
+            max_distance=max_distance,
+            retrieval=retrieval,
+            fetch_k=fetch_k,
+            lambda_mult=lambda_mult,
+        )
+
         output_result(q, ans, output_file)
 
-if __name__=="__main__":
-    ap = argparse.ArgumentParser(description="📚 Saturni: FAISS RAG + Ollama AI with transcript logging")
+
+if __name__ == "__main__":
+    ap = argparse.ArgumentParser(
+        description="📚 Saturni: FAISS RAG + Ollama AI with transcript logging"
+    )
+
     ap.add_argument("--index", action="store_true", help="Build FAISS index")
     ap.add_argument("--add", nargs="+", help="Add new .txt files")
     ap.add_argument("--repl", action="store_true", help="Interactive query mode")
     ap.add_argument("--query", type=str, help="One-shot query")
-    ap.add_argument("--ai", type=str, default="gemma2:2b", help="Ollama model for answers (default gemma2:2b)")
-    ap.add_argument("--max-distance", type=float, default=0.90,
-                    help="Maximum FAISS L2 retrieval distance (lower is better; default 0.90)")
-    ap.add_argument("-o", "--output", type=str, help="Append Q&A transcript to file")
+
+    ap.add_argument(
+        "--ai",
+        type=str,
+        default="gemma3:4b",
+        help="Ollama model for answers (default gemma3:4b)",
+    )
+
+    ap.add_argument(
+        "--max-distance",
+        type=float,
+        default=0.90,
+        help="Maximum FAISS L2 distance (lower is better; default 0.90)",
+    )
+
+    ap.add_argument(
+        "--retrieval",
+        choices=["dense", "mmr"],
+        default="mmr",
+        help="Retrieval strategy (default: mmr)",
+    )
+
+    ap.add_argument(
+        "--fetch-k",
+        type=int,
+        default=12,
+        help="Candidate pool size for MMR (default: 12)",
+    )
+
+    ap.add_argument(
+        "--lambda-mult",
+        type=float,
+        default=0.70,
+        help="MMR relevance weight from 0 to 1 (default: 0.70)",
+    )
+
+    ap.add_argument(
+        "-o",
+        "--output",
+        type=str,
+        help="Append Q&A transcript to file",
+    )
+
     args = ap.parse_args()
 
-    if args.index: build_index()
-    if args.add: add_files(args.add)
-    if args.repl: repl(args.ai, args.output, args.max_distance)
-    if args.query:
-        ans = rag_answer(args.query, model=args.ai, max_distance=args.max_distance)
-        output_result(args.query, ans, args.output)
+    if args.index:
+        build_index()
 
+    if args.add:
+        add_files(args.add)
+
+    if args.repl:
+        repl(
+            args.ai,
+            args.output,
+            args.max_distance,
+            args.retrieval,
+            args.fetch_k,
+            args.lambda_mult,
+        )
+
+    if args.query:
+        ans = rag_answer(
+            args.query,
+            model=args.ai,
+            max_distance=args.max_distance,
+            retrieval=args.retrieval,
+            fetch_k=args.fetch_k,
+            lambda_mult=args.lambda_mult,
+        )
+
+        output_result(args.query, ans, args.output)

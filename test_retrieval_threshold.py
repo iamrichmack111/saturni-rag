@@ -5,7 +5,12 @@ import numpy as np
 source = Path("saturni.py").read_text()
 tree = ast.parse(source)
 
-wanted = {"retrieve", "rag_answer"}
+wanted = {
+    "_cosine_similarity",
+    "_mmr_select",
+    "retrieve",
+    "rag_answer",
+}
 
 nodes = [
     n for n in tree.body
@@ -76,6 +81,7 @@ def test_no_evidence_abstains_without_generation():
         "quantum computing",
         model="gemma3:4b",
         max_distance=0.50,
+        retrieval="dense",
     )
 
     assert answer == "Not found in text."

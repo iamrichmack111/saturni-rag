@@ -31,7 +31,14 @@ ctx = [
 ]
 
 
-def retrieve(_q, topk=3, max_distance=0.90):
+def retrieve(
+    _q,
+    topk=3,
+    max_distance=0.90,
+    strategy="dense",
+    fetch_k=12,
+    lambda_mult=0.70,
+):
     return ctx
 
 
