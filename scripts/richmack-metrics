@@ -1,0 +1,218 @@
+#!/usr/bin/env python3
+import ast
+import json
+import subprocess
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+
+SOURCE_FILES = [
+    p for p in ROOT.glob("*.py")
+    if not p.name.startswith("test_")
+]
+
+TEST_FILES = list(ROOT.glob("test_*.py"))
+
+def lines(paths):
+    return sum(len(p.read_text(errors="ignore").splitlines()) for p in paths)
+
+def git_count(*args):
+    try:
+        out = subprocess.check_output(
+            ["git", *args],
+            cwd=ROOT,
+            text=True,
+            stderr=subprocess.DEVNULL
+        ).strip()
+        return int(out) if out else 0
+    except Exception:
+        return 0
+
+def contributors():
+    try:
+        out = subprocess.check_output(
+            ["git", "shortlog", "-sne", "HEAD"],
+            cwd=ROOT,
+            text=True
+        )
+        return len([x for x in out.splitlines() if x.strip()])
+    except Exception:
+        return 0
+
+def tags():
+    try:
+        out = subprocess.check_output(
+            ["git", "tag"],
+            cwd=ROOT,
+            text=True
+        )
+        return len([x for x in out.splitlines() if x.strip()])
+    except Exception:
+        return 0
+
+def complexity():
+    funcs = []
+    syntax_errors = 0
+
+    for path in SOURCE_FILES:
+        try:
+            tree = ast.parse(path.read_text(errors="ignore"))
+        except SyntaxError:
+            syntax_errors += 1
+            continue
+
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                score = 1
+                for child in ast.walk(node):
+                    if isinstance(child, (
+                        ast.If, ast.For, ast.While, ast.Try,
+                        ast.With, ast.BoolOp, ast.IfExp
+                    )):
+                        score += 1
+                funcs.append((node.name, score, getattr(node, "end_lineno", node.lineno) - node.lineno + 1))
+
+    if not funcs:
+        return {
+            "functions": 0,
+            "average": 0,
+            "maximum": 0,
+            "long_functions": 0,
+            "syntax_errors": syntax_errors,
+        }
+
+    return {
+        "functions": len(funcs),
+        "average": round(sum(x[1] for x in funcs) / len(funcs), 2),
+        "maximum": max(x[1] for x in funcs),
+        "long_functions": sum(1 for _, _, n in funcs if n > 40),
+        "syntax_errors": syntax_errors,
+    }
+
+source_lines = lines(SOURCE_FILES)
+test_lines = lines(TEST_FILES)
+ratio = round((test_lines / source_lines * 100), 2) if source_lines else 0
+
+cx = complexity()
+commits = git_count("rev-list", "--count", "HEAD")
+contribs = contributors()
+release_tags = tags()
+
+testing = min(10, 3 + ratio / 8)
+complexity_score = max(0, 10 - max(0, cx["average"] - 3) * 0.8 - cx["long_functions"] * 0.25)
+maintainability = min(10, 5 + testing * 0.25 + complexity_score * 0.25)
+workflow_files = (
+    list((ROOT / ".github" / "workflows").glob("*.yml"))
+    + list((ROOT / ".github" / "workflows").glob("*.yaml"))
+)
+
+automation_assets = [
+    ROOT / "scripts" / "quality-gate",
+    ROOT / "scripts" / "richmack-metrics",
+]
+
+automation = 2.0
+
+if workflow_files:
+    automation += 3.0
+
+automation += min(
+    3.0,
+    sum(1.5 for path in automation_assets if path.exists())
+)
+
+if TEST_FILES:
+    automation += 1.0
+
+automation = min(10.0, automation)
+throughput = min(10, 4 + commits / 4)
+technical_debt = max(0, 10 - cx["long_functions"] * 0.35 - cx["syntax_errors"] * 2)
+
+engineering_index = round(
+    (
+        testing +
+        complexity_score +
+        maintainability +
+        automation +
+        throughput +
+        technical_debt
+    ) / 6,
+    2
+)
+
+richmack_weissman = min(
+    10.0,
+    round(
+        engineering_index * (1 + min(ratio, 100) / 500),
+        2
+    )
+)
+
+data = {
+    "source_files": len(SOURCE_FILES),
+    "source_lines": source_lines,
+    "test_files": len(TEST_FILES),
+    "test_lines": test_lines,
+    "test_source_ratio": ratio,
+    "git_commits": commits,
+    "contributors": contribs,
+    "release_tags": release_tags,
+    "complexity": cx,
+    "scores": {
+        "throughput": round(throughput, 2),
+        "automation": round(automation, 2),
+        "testing": round(testing, 2),
+        "complexity": round(complexity_score, 2),
+        "technical_debt": round(technical_debt, 2),
+        "maintainability": round(maintainability, 2),
+        "engineering_index": engineering_index,
+        "richmack_weissman": richmack_weissman,
+    },
+}
+
+if "--json" in __import__("sys").argv:
+    print(json.dumps(data, indent=2))
+else:
+    print()
+    print("Saturni Engineering Metrics")
+    print("=" * 62)
+    print(f"Source files:        {data['source_files']}")
+    print(f"Source lines:        {data['source_lines']}")
+    print(f"Test files:          {data['test_files']}")
+    print(f"Test lines:          {data['test_lines']}")
+    print(f"Test/source ratio:   {data['test_source_ratio']}%")
+    print(f"Git commits:         {data['git_commits']}")
+    print(f"Contributors:        {data['contributors']}")
+    print(f"Release tags:        {data['release_tags']}")
+    print()
+    print("Python complexity")
+    print("-" * 62)
+    print(f"Functions:           {cx['functions']}")
+    print(f"Average complexity:  {cx['average']}")
+    print(f"Maximum complexity:  {cx['maximum']}")
+    print(f"Long functions:      {cx['long_functions']}")
+    print(f"Syntax errors:       {cx['syntax_errors']}")
+    print()
+    print("Engineering Scores")
+    print("-" * 62)
+    for k in [
+        "throughput",
+        "automation",
+        "testing",
+        "complexity",
+        "technical_debt",
+        "maintainability",
+    ]:
+        label = k.replace("_", " ").title()
+        print(f"{label:<22}{data['scores'][k]:>5.1f}/10")
+
+    print()
+    print(f"{'ENGINEERING INDEX':<22}{engineering_index:>5.1f}/10")
+    print(f"{'RICHMACK WEISSMAN':<22}{richmack_weissman:>5.1f}/10")
+
+    if cx["syntax_errors"] == 0 and engineering_index >= 6:
+        print()
+        print("PASS: Saturni quality gate")
+    else:
+        print()
+        print("FAIL: Saturni quality gate")
