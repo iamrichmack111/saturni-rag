@@ -180,7 +180,7 @@ def test_load_rejects_corrupt_metadata(tmp_path):
         encoding="utf-8",
     )
 
-    with pytest.raises(Exception):
+    with pytest.raises((ValueError, json.JSONDecodeError)):
         store._load()
 
 
