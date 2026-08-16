@@ -1,0 +1,53 @@
+name: Saturni Quality Gate
+
+on:
+  push:
+    branches:
+      - master
+      - "feature/**"
+      - "fix/**"
+  pull_request:
+    branches:
+      - master
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install \
+            numpy \
+            requests \
+            pytest \
+            faiss-cpu \
+            pyfiglet \
+            termcolor \
+            tqdm
+
+      - name: Syntax check
+        run: |
+          python -m py_compile saturni.py
+          python -m py_compile rag_embed.py
+
+      - name: Run tests
+        run: |
+          python -m pytest -q
+
+      - name: Validate metrics JSON
+        run: |
+          ./scripts/richmack-metrics --json | python -m json.tool >/dev/null
+
+      - name: Run Richmack quality gate
+        run: |
+          ./scripts/richmack-metrics

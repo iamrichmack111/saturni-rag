@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "=============================================================="
+echo "SATURNI QUALITY GATE"
+echo "=============================================================="
+
+echo
+echo "1. Syntax"
+python -m py_compile saturni.py
+python -m py_compile rag_embed.py
+echo "PASS: syntax"
+
+echo
+echo "2. Tests"
+python -m pytest -q
+
+echo
+echo "3. Metrics JSON"
+./scripts/richmack-metrics --json | python -m json.tool >/dev/null
+echo "PASS: metrics JSON"
+
+echo
+echo "4. Engineering metrics"
+./scripts/richmack-metrics
+
+echo
+echo "PASS: Saturni quality gate"
