@@ -1,7 +1,7 @@
 from saturni_rag.core import (
     RetrievedChunk,
-    sanitize_citations,
     format_sources,
+    sanitize_citations,
 )
 
 
