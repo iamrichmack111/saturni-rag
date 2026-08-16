@@ -6,8 +6,9 @@ from tqdm import tqdm   # progress bar
 
 print(colored(Figlet(font="slant").renderText("Saturni"), "cyan"))
 
-INDEX_FILE, META_FILE = "books.faiss", "meta.pkl"
-EMBED_MODEL = "nomic-embed-text"   # embedding model
+INDEX_FILE, META_FILE, CONFIG_FILE = "books.faiss", "meta.pkl", "index_config.pkl"
+EMBED_MODEL = "nomic-embed-text"
+CHUNK_SIZE = 200
 
 # --- Ensure Ollama Model ---
 def ensure_ollama_model(model_name):
@@ -27,9 +28,39 @@ def embed(text):
 def find_text_files():
     return glob.glob("clean_pg*.txt") or glob.glob("pg*.txt")
 
-def chunk_text(text, size=500):
+def chunk_text(text, size=None):
+    size = CHUNK_SIZE if size is None else size
     words = text.split()
     return [" ".join(words[i:i+size]) for i in range(0, len(words), size)]
+
+def current_index_config():
+    return {
+        "chunk_size": CHUNK_SIZE,
+        "embed_model": EMBED_MODEL,
+    }
+
+def save_index_config():
+    with open(CONFIG_FILE, "wb") as f:
+        pickle.dump(current_index_config(), f)
+
+def validate_index_config():
+    if not os.path.exists(CONFIG_FILE):
+        raise RuntimeError(
+            "Existing index has no configuration metadata. "
+            "Create index_config.pkl for the existing index or rebuild with --index."
+        )
+
+    with open(CONFIG_FILE, "rb") as f:
+        stored = pickle.load(f)
+
+    requested = current_index_config()
+
+    if stored != requested:
+        raise RuntimeError(
+            "Index configuration mismatch. "
+            f"Stored={stored}, requested={requested}. "
+            "Rebuild the index before changing chunk or embedding settings."
+        )
 
 # --- FAISS Index ---
 def load_index():
@@ -49,10 +80,15 @@ def build_index():
             vecs.append(embed(ch))
     vecs = np.vstack(vecs).astype("float32")
     index = faiss.IndexFlatL2(vecs.shape[1]); index.add(vecs)
-    faiss.write_index(index, INDEX_FILE); pickle.dump(docs, open(META_FILE,"wb"))
+    faiss.write_index(index, INDEX_FILE)
+    pickle.dump(docs, open(META_FILE, "wb"))
+    save_index_config()
     print(colored(f"✅ Indexed {len(docs)} chunks from {len(files)} files", "green"))
 
 def add_files(files):
+    if os.path.exists(INDEX_FILE):
+        validate_index_config()
+
     if os.path.exists(INDEX_FILE) and os.path.exists(META_FILE):
         docs = pickle.load(open(META_FILE, "rb"))
     else:
