@@ -1,5 +1,27 @@
 # Changelog
 
+## [1.2.0] - 2026-08-16
+
+### Added
+- Document-aware MMR retrieval.
+- Similarity thresholding and out-of-domain abstention.
+- Deterministic source-traceable citations.
+- Runtime hardening for Ollama embedding and generation failures.
+- Package-aware Richmack engineering metrics.
+- Automated Saturni quality gate and expanded regression coverage.
+
+### Changed
+- Integrated Saturni into the `src/saturni_rag` package architecture.
+- Improved document update handling to prevent stale chunks.
+- Added index configuration validation.
+- Updated CLI retrieval controls and package tests.
+
+### Quality
+- 21 regression tests passing.
+- Richmack Weissman: 9.0/10.
+- Engineering Index: 8.3/10.
+
+
 All notable changes to Saturni RAG are documented here.
 
 ## [1.1.0] - 2026-07-20
