@@ -1,561 +1,641 @@
-# Saturni RAG
+# 🪐 Saturni RAG
 
-[![Version](https://img.shields.io/badge/version-1.1.0-6f42c1.svg)](CHANGELOG.md)
-[![Python](https://img.shields.io/badge/python-3.10%2B-3776AB.svg?logo=python&logoColor=white)](https://www.python.org/)
-[![CI](https://github.com/iamrichmack111/saturni-rag/actions/workflows/ci.yml/badge.svg)](https://github.com/iamrichmack111/saturni-rag/actions/workflows/ci.yml)
-[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+**A lightweight, local-first Retrieval-Augmented Generation system built for transparent retrieval, deterministic citations, and practical knowledge search.**
 
-**Saturni RAG** is a local-first retrieval-augmented generation system for searching and analyzing books, notes, research, and other plain-text collections. It combines Ollama embeddings and local language models with a FAISS vector index, keeping document processing, retrieval, and generation on infrastructure you control.
+![Version](https://img.shields.io/badge/version-1.2.0-blue)
+![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue)
+![Tests](https://img.shields.io/badge/tests-21%20passing-brightgreen)
+![Quality Gate](https://img.shields.io/badge/quality%20gate-passing-brightgreen)
+![Engineering Index](https://img.shields.io/badge/engineering%20index-8.3%2F10-brightgreen)
+![Richmack Weissman](https://img.shields.io/badge/Richmack%20Weissman-9.1%2F10-brightgreen)
 
-## Feature demonstrations
+Saturni RAG turns a directory of documents into a searchable local knowledge system.
 
-### Batched indexing with a live progress bar
+Instead of sending your entire knowledge base to a remote service, Saturni indexes documents locally, creates embeddings through Ollama, stores vectors with FAISS, retrieves the most relevant evidence, and gives a local language model the context needed to answer a question.
 
-Run the following command from the repository directory. The separate data directory makes it safe to use as a screenshot demonstration without replacing the main index.
+Version **1.2.0** focuses on retrieval quality, citation integrity, runtime hardening, testing, packaging, and engineering automation.
 
-```bash
-cd "$HOME/saturni-rag"
-rm -rf "$HOME/.cache/saturni-progress-demo"
+---
 
-saturni index \
-  --force \
-  --data-dir "$HOME/.cache/saturni-progress-demo" \
-  clean_pg59.txt
-```
+## ✨ Features
 
-![Saturni preparing document chunks and displaying live embedding progress](docs/saturni-index-progress.png)
+- Local document ingestion
+- Automatic text chunking
+- Configurable chunk overlap
+- Ollama embeddings
+- FAISS vector search
+- Similarity-based retrieval
+- Minimum similarity thresholds
+- Candidate over-fetching
+- Maximum Marginal Relevance (MMR)
+- Duplicate-result reduction
+- Deterministic source citations
+- Citation sanitization
+- Retrieval abstention for weak matches
+- Document update handling
+- Local generation through Ollama
+- Interactive CLI
+- Runtime diagnostics
+- Configurable retrieval parameters
+- Python package installation
+- Automated testing
+- Ruff linting
+- Python 3.10 / 3.11 / 3.12 CI
+- Automated package builds
+- GitHub release automation
+- Engineering metrics
+- Richmack quality gate
 
-Saturni reports the number of prepared chunks, embedding percentage, elapsed time, estimated time remaining, and processing speed.
+---
 
-### Interactive Ollama model selection and grounded answers
+## 🧠 How Saturni RAG Works
 
-Use `--choose-model` to select any installed Ollama generation model before asking a one-shot question:
+The basic pipeline is:
 
-```bash
-saturni ask \
-  --choose-model \
-  --show-sources \
-  "What relationship do the indexed texts establish between virtue and happiness?"
-```
-
-![Saturni model selector, generation progress, grounded answer, and source similarities](docs/saturni-model-selection-answer.png)
-
-The result includes the selected model, generation activity, numbered citations, source files, chunk numbers, and similarity scores.
-
-### Interactive REPL with model switching and transcript logging
-
-Start a persistent research session with an interactive model chooser:
-
-```bash
-saturni repl \
-  --choose-model \
-  --show-sources \
-  -o "$HOME/saturni-session.log"
-```
-
-At the `Ask>` prompt, enter:
-
-```text
-How is self-mastery connected to happiness?
-```
-
-Use `/model` at any time to select another installed Ollama model. Use `exit` or `quit` to close Saturni.
-
-![Saturni interactive REPL with model selection, citations, generation activity, and saved transcript](docs/saturni-repl-session.png)
-
-## Why Saturni
-
-Saturni demonstrates a complete local RAG pipeline rather than a basic chatbot wrapper:
-
-- Discovers individual text files or recursively scans directories.
-- Splits documents into overlapping chunks to preserve context.
-- Creates batched embeddings with Ollama and `nomic-embed-text`.
-- Displays live `tqdm` progress while embedding documents.
-- Normalizes vectors for cosine-similarity retrieval in FAISS.
-- Retrieves the most relevant passages for each question.
-- Generates grounded answers with numbered source references.
-- Lets users select from locally installed Ollama models.
-- Supports model switching from inside the interactive REPL.
-- Displays generation activity, elapsed time, and output speed.
-- Saves one-shot and interactive research transcripts.
-- Detects unchanged documents with SHA-256 hashes during incremental updates.
-- Stores portable JSON metadata and performs atomic index writes.
-- Includes an installer, uninstaller, diagnostics, tests, linting, builds, and CI.
-
-## Architecture
-
-```text
-Plain-text documents
+    Documents
         │
         ▼
-Overlapping word chunks
+    Text Discovery
         │
         ▼
-Ollama embedding model
+    Chunking
         │
         ▼
-Normalized vectors ───────────────► FAISS index
-                                        │
-Question ─► query embedding ─► top-k retrieval
-                                        │
-                                        ▼
-                            Retrieved source passages
-                                        │
-                                        ▼
-                           Selected Ollama language model
-                                        │
-                                        ▼
-                 Grounded answer + citations + source scores
-```
+    Ollama Embeddings
+        │
+        ▼
+    FAISS Vector Index
+        │
+        ▼
+    Similarity Search
+        │
+        ▼
+    Candidate Over-Fetching
+        │
+        ▼
+    MMR Diversification
+        │
+        ▼
+    Similarity Threshold
+        │
+        ▼
+    Retrieved Evidence
+        │
+        ▼
+    Local LLM
+        │
+        ▼
+    Answer + Citations
 
-## Requirements
+The core principle is simple:
 
-- Linux or macOS
-- Python 3.10 or newer
-- Ollama installed and running
-- Enough storage for the selected Ollama models and generated vector index
+> Retrieval happens before generation.
 
-Start Ollama before indexing or asking questions:
+The model is not expected to magically know what is inside your documents.
 
-```bash
-ollama serve
-```
+Saturni first finds relevant evidence and then provides that evidence to the generation model.
 
-## Installation
+---
 
-Clone the repository and run the isolated installer:
+## 🔎 Retrieval Pipeline
 
-```bash
-git clone https://github.com/iamrichmack111/saturni-rag.git
-cd saturni-rag
-chmod +x install.sh uninstall.sh
-./install.sh --pull-models
-```
+### 1. Embedding Search
 
-The installer:
+The user's question is converted into an embedding.
 
-- creates a virtual environment at `~/.local/share/saturni-rag/venv`;
-- installs Saturni and its Python dependencies;
-- creates `saturni` and `saturni-rag` commands in `~/.local/bin`;
-- optionally pulls `nomic-embed-text` and `gemma2:2b`;
-- does not require `sudo`.
+That vector is compared against vectors stored in the FAISS index.
 
-Add the user command directory to the current shell when necessary:
+    Question
+       ↓
+    Embedding
+       ↓
+    Vector similarity
+       ↓
+    Candidate chunks
 
-```bash
-export PATH="$HOME/.local/bin:$PATH"
-hash -r
-```
+### 2. Candidate Over-Fetching
 
-To make the path permanent in Bash:
+Instead of immediately taking only the final number of requested results, Saturni can retrieve a larger candidate pool first.
 
-```bash
-echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.bashrc"
-source "$HOME/.bashrc"
-```
+For example:
+
+    top_k   = 5
+    fetch_k = 20
+
+Saturni can retrieve 20 candidates and then select the best 5.
+
+This gives the diversification stage more evidence to work with.
+
+### 3. Maximum Marginal Relevance
+
+MMR balances relevance and diversity.
+
+Without diversification, vector search can return several nearly identical chunks from the same section of a document.
+
+Conceptually:
+
+    MMR = λ × relevance - (1 - λ) × redundancy
+
+A higher lambda favors relevance.
+
+A lower lambda favors diversity.
+
+### 4. Minimum Similarity Threshold
+
+Not every vector match is useful.
+
+Saturni can reject retrieved chunks below a configured similarity threshold.
+
+Conceptually:
+
+    similarity >= minimum_similarity
+
+If the evidence is too weak, Saturni can abstain instead of generating an answer from poor context.
+
+---
+
+## 📚 Citation Integrity
+
+Saturni attaches retrieved evidence to generated answers.
+
+Citation handling is deterministic.
+
+The system validates citation references against the evidence actually returned by retrieval.
+
+This prevents generated citation markers from silently pointing to nonexistent evidence.
+
+Example:
+
+    Saturn is the sixth planet from the Sun. [1]
+
+    Sources:
+    [1] astronomy.txt
+
+The generation model produces the answer.
+
+Saturni controls the evidence mapping.
+
+---
+
+## 🛡️ Retrieval Abstention
+
+A RAG system should sometimes say:
+
+    I don't have enough evidence to answer that.
+
+That is preferable to generating an answer from unrelated chunks.
+
+Saturni's similarity threshold allows retrieval to fail safely when the knowledge base does not contain sufficiently relevant evidence.
+
+---
+
+## 🦙 Ollama
+
+Saturni uses Ollama for local model access.
+
+Typical architecture:
+
+    Saturni
+       │
+       ├── Embedding Model
+       │
+       └── Generation Model
+              │
+              ▼
+            Ollama
+
+Check locally installed models with:
+
+    ollama list
+
+---
+
+## 🚀 Installation
+
+Clone the repository:
+
+    git clone git@github.com:iamrichmack111/saturni-rag.git
+    cd saturni-rag
+
+Create a virtual environment:
+
+    python3 -m venv .venv
+    source .venv/bin/activate
+
+Install Saturni:
+
+    python -m pip install --upgrade pip
+    python -m pip install -e .
+
+For development:
+
+    python -m pip install -e '.[dev]'
+
+---
+
+## ⚡ Quick Start
 
 Verify the installation:
 
-```bash
-saturni --version
-saturni doctor
-```
+    saturni --version
 
-A missing vector index is expected before the first indexing run. All other diagnostics should pass.
+Expected version:
 
-## Quick start
+    1.2.0
 
-### 1. Build the main index
+View available commands:
 
-Index the philosophy texts included in the repository:
+    saturni --help
 
-```bash
-cd "$HOME/saturni-rag"
-saturni index --force clean_pg*.txt
-```
+---
 
-Index a separate document directory:
+## 🩺 Diagnostics
 
-```bash
-saturni index --force "$HOME/Documents/philosophy"
-```
+Use Saturni's available CLI diagnostics to verify the local runtime and Ollama environment.
 
-Saturni defaults to 500-word chunks, 75-word overlap, and embedding batches of 16.
+Check the available commands with:
 
-### 2. Check the completed index
+    saturni --help
 
-```bash
-saturni doctor
-```
+---
 
-The vector-index diagnostic should now report `PASS`.
+## 📥 Index Documents
 
-### 3. Ask a grounded question
+Saturni's indexing pipeline performs:
 
-Choose a model interactively:
+    discover files
+          ↓
+    read text
+          ↓
+    split into chunks
+          ↓
+    create embeddings
+          ↓
+    build FAISS index
+          ↓
+    store retrieval metadata
 
-```bash
-saturni ask \
-  --choose-model \
-  --show-sources \
-  "How do the indexed texts describe virtue and self-mastery?"
-```
+Use:
 
-Choose a model directly:
+    saturni --help
 
-```bash
-saturni ask \
-  --model gemma2:2b \
-  --show-sources \
-  "What relationship do the indexed texts establish between virtue and happiness?"
-```
+to see the exact indexing syntax for the installed version.
 
-### 4. Start an interactive research session
+---
 
-```bash
-saturni repl \
-  --choose-model \
-  --show-sources \
-  -o "$HOME/saturni-session.log"
-```
+## 💬 Ask Questions
 
-REPL controls:
+After building an index, Saturni retrieves relevant chunks and provides them to the configured generation model.
 
-```text
-/model     Select another installed Ollama model
-exit       Close Saturni
-quit       Close Saturni
-```
+Conceptually:
 
-### 5. Add documents incrementally
+    question
+       ↓
+    query embedding
+       ↓
+    FAISS candidates
+       ↓
+    MMR
+       ↓
+    threshold filtering
+       ↓
+    evidence
+       ↓
+    generation
+       ↓
+    answer + sources
 
-```bash
-saturni add "$HOME/Documents/philosophy/new-book.txt"
-```
+Use:
 
-Unchanged documents are skipped using their SHA-256 hashes.
+    saturni --help
 
-## Commands
+for the exact CLI options available in the installed version.
 
-```text
-saturni index [PATH ...]   Build or replace a FAISS index
-saturni add PATH [...]     Add changed or new documents
-saturni ask QUESTION       Ask one grounded question
-saturni repl               Open the interactive question loop
-saturni pull MODEL         Download an Ollama model
-saturni doctor             Check Python, packages, Ollama, and storage
-```
+---
 
-Display command-specific options:
+## ⚙️ Retrieval Controls
 
-```bash
-saturni --help
-saturni index --help
-saturni ask --help
-saturni repl --help
-```
+Saturni includes retrieval concepts such as:
 
-## Model selection
+    top_k
+    fetch_k
+    min_similarity
+    mmr_lambda
+    chunk_size
+    overlap
 
-List models directly through Ollama:
+### top_k
 
-```bash
-ollama list
-```
+Number of final chunks returned to the generation stage.
 
-Open the interactive selector for a one-shot question:
+### fetch_k
 
-```bash
-saturni ask \
-  --choose-model \
-  --show-sources \
-  "What practices support self-mastery?"
-```
+Number of initial candidates retrieved before diversification.
 
-Use a model without opening the selector:
+Usually:
 
-```bash
-saturni ask \
-  --model qwen3:4b \
-  --show-sources \
-  "Compare the retrieved arguments about virtue."
-```
+    fetch_k >= top_k
 
-Switch models during a REPL session:
+### min_similarity
 
-```text
-Ask> /model
-```
+Minimum acceptable similarity between the query and retrieved evidence.
 
-Embedding models such as `nomic-embed-text` are excluded from the generation-model menu.
+Higher values make retrieval stricter.
 
-## Progress reporting
+### mmr_lambda
 
-During indexing, Saturni displays determinate progress because the total number of chunks is known:
+Controls the relevance/diversity tradeoff during MMR selection.
 
-```text
-Embedding documents: 87%|████████▋ | 48/55 [00:22<00:03, 2.02chunk/s]
-```
+### chunk_size
 
-During answer generation, Saturni displays generated chunks, elapsed time, and speed:
+Controls the approximate amount of text placed into each indexed chunk.
 
-```text
-Generating with gemma2:2b: 118chunk [00:33, 3.47chunk/s]
-```
+### overlap
 
-Generation does not display a percentage because the final response length is not known in advance.
+Controls how much neighboring chunks share.
 
-## Useful examples
+Overlap helps preserve context around chunk boundaries.
 
-Retrieve five passages instead of three:
+---
 
-```bash
-saturni ask \
-  --top-k 5 \
-  --show-sources \
-  "What themes recur across the collection?"
-```
+## 🧪 Testing
 
-Create smaller chunks with additional overlap:
+Run the complete test suite:
 
-```bash
-saturni index \
-  --force \
-  --chunk-size 350 \
-  --overlap 100 \
-  clean_pg*.txt
-```
+    pytest
 
-Use a separate index for experiments:
+Saturni v1.2.0 currently passes:
 
-```bash
-saturni index \
-  --force \
-  --data-dir "$HOME/.cache/saturni-experiment" \
-  clean_pg59.txt
-```
+    21 tests
 
-Use a remote Ollama server:
+The tests cover areas including retrieval behavior, thresholds, citation integrity, and runtime hardening.
 
-```bash
-saturni ask \
-  --ollama-url http://192.168.1.50:11434 \
-  --show-sources \
-  "Summarize the retrieved argument."
-```
+---
 
-Save a one-shot transcript:
+## 🧹 Linting
 
-```bash
-saturni ask \
-  --show-sources \
-  -o "$HOME/saturni-answer.log" \
-  "How is discipline connected to freedom?"
-```
+Saturni uses Ruff.
 
-Display the end of a saved session:
+Run:
 
-```bash
-tail -n 40 "$HOME/saturni-session.log"
-```
+    ruff check .
 
-## Answer-quality tests
+Automatically fix supported lint issues:
 
-Test comparative retrieval:
+    ruff check . --fix
 
-```bash
-saturni ask \
-  --choose-model \
-  --show-sources \
-  "Compare how the retrieved works describe virtue, temptation, and self-control. Identify meaningful differences between the sources."
-```
+Current v1.2.0 state:
 
-Test a focused question:
+    All checks passed!
 
-```bash
-saturni ask \
-  --choose-model \
-  --show-sources \
-  "According to the indexed texts, what practices help a person master temptation?"
-```
+---
 
-Test grounding with an unsupported modern topic:
+## 🚦 Quality Gate
 
-```bash
-saturni ask \
-  --choose-model \
-  --show-sources \
-  "What do these authors say about TikTok recommendation algorithms?"
-```
+Saturni includes a local engineering quality gate.
 
-A grounded response should acknowledge when the indexed material is insufficient instead of inventing unsupported claims.
+Run:
 
-## Defaults
+    ./scripts/quality-gate
 
-| Setting | Default |
-|---|---:|
-| Embedding model | `nomic-embed-text` |
-| Generation model | `gemma2:2b` |
-| Chunk size | 500 words |
-| Chunk overlap | 75 words |
-| Embedding batch size | 16 |
-| Retrieved passages | 3 |
-| Ollama URL | `http://127.0.0.1:11434` |
-| HTTP timeout | 120 seconds |
+The gate verifies:
 
-Every major setting can be overridden from the command line.
+    Syntax
+    Tests
+    Metrics JSON
+    Engineering Metrics
 
-## Data and privacy
+A successful run ends with:
 
-Generated data is stored outside the Git repository by default:
+    PASS: Saturni quality gate
 
-```text
-~/.local/share/saturni-rag/data/books.faiss
-~/.local/share/saturni-rag/data/metadata.json
-```
+---
 
-Change the location with `SATURNI_HOME`, `XDG_DATA_HOME`, or `--data-dir`.
+## 📊 Engineering Metrics
 
-Saturni sends document chunks and questions only to the Ollama server configured by `--ollama-url` or `OLLAMA_HOST`. With the default local Ollama configuration, the RAG workflow does not require a hosted model API.
+Run:
 
-## Legacy command compatibility
+    ./scripts/richmack-metrics
 
-The original command flags remain available:
+Saturni v1.2.0 metrics:
 
-```bash
-saturni --index
-saturni --query "What is Faust about?" --ai gemma2:2b
-saturni --repl --ai gemma2:2b -o session.log
-```
+    Saturni Engineering Metrics
+    ==============================================================
+    Source files:        4
+    Source lines:        1305
+    Test files:          5
+    Test lines:          593
+    Test/source ratio:   45.44%
+    Git commits:         23
+    Contributors:        3
+    Release tags:        2
 
-New projects should use the subcommand interface shown above.
+    Python complexity
+    --------------------------------------------------------------
+    Functions:           39
+    Average complexity:  4.74
+    Maximum complexity:  17
+    Long functions:      8
+    Syntax errors:       0
 
-## Troubleshooting
+    Engineering Scores
+    --------------------------------------------------------------
+    Throughput              9.8/10
+    Automation              9.0/10
+    Testing                 8.7/10
+    Complexity              6.6/10
+    Technical Debt          7.2/10
+    Maintainability         8.8/10
 
-### `FAIL Vector index` in `saturni doctor`
+    ENGINEERING INDEX       8.3/10
+    RICHMACK WEISSMAN       9.1/10
 
-Create the first index and rerun diagnostics:
+---
 
-```bash
-cd "$HOME/saturni-rag"
-saturni index --force clean_pg*.txt
-saturni doctor
-```
+## 📐 Richmack Weissman
 
-### Ollama is not reachable
+The **Richmack Weissman** is a custom engineering-efficiency metric used to evaluate how effectively a repository converts development activity into tested, automated, maintainable software.
 
-Confirm the service is running:
+It is not a standard industry benchmark.
 
-```bash
-ollama serve
-```
+It is a project-specific engineering measurement used across Richmack projects.
 
-Then check the API:
+Saturni RAG v1.2.0:
 
-```bash
-curl http://127.0.0.1:11434/api/tags
-```
+    RICHMACK WEISSMAN
+    9.1 / 10
 
-### A required model is missing
+---
 
-```bash
-saturni pull nomic-embed-text
-saturni pull gemma2:2b
-```
+## 🏗️ Continuous Integration
 
-### `saturni: command not found`
+Saturni runs automated GitHub Actions workflows across:
 
-```bash
-export PATH="$HOME/.local/bin:$PATH"
-hash -r
-```
+    Python 3.10
+    Python 3.11
+    Python 3.12
 
-Add the export line to `~/.bashrc` or `~/.zshrc` to make it permanent.
+The CI pipeline performs:
 
-### Python 3.10 reports an error for `datetime.UTC`
+    Install
+       ↓
+    Version Check
+       ↓
+    Ruff
+       ↓
+    Tests
+       ↓
+    Package Build
+       ↓
+    Package Validation
+       ↓
+    Wheel Installation Test
 
-Saturni supports Python 3.10 by using `timezone.utc`. Confirm the installed source contains the compatible import:
+This verifies both the source tree and the package users actually install.
 
-```bash
-grep -nE 'datetime|timezone|UTC' \
-  "$HOME/saturni-rag/src/saturni_rag/core.py"
-```
+---
 
-Then reinstall the current source tree:
+## 📦 Packaging
 
-```bash
-cd "$HOME/saturni-rag"
-./install.sh
-hash -r
-```
+Saturni uses a standard Python package structure.
 
-## Development
+The primary package lives under:
 
-Create an editable development environment:
+    src/saturni_rag/
 
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -e '.[dev]'
-```
+Distribution artifacts can include:
 
-Run the quality checks:
+    Python wheel
+    Source archive
 
-```bash
-ruff check .
-pytest
-python -m build
-```
+The release workflow builds and validates the distributions.
 
-GitHub Actions runs linting, tests, and package builds against supported Python versions.
+---
 
-## Project structure
+## 🚀 Release Automation
 
-```text
-saturni-rag/
-├── .github/workflows/     # CI and release automation
-├── docs/                  # README screenshots
-├── src/saturni_rag/
-│   ├── __init__.py        # package version
-│   ├── cli.py             # commands, model menu, progress, and REPL
-│   └── core.py            # chunking, Ollama, FAISS, and retrieval
-├── tests/                 # automated tests
-├── install.sh             # isolated user installer
-├── uninstall.sh           # data-preserving uninstaller
-├── pyproject.toml         # package and tool configuration
-├── requirements.txt       # runtime dependencies
-├── CHANGELOG.md
-├── CONTRIBUTING.md
-├── SECURITY.md
-└── LICENSE
-```
+Version tags matching:
 
-## Uninstall
+    vX.Y.Z
 
-Remove the application while preserving the generated index:
+trigger the release workflow.
 
-```bash
-~/.local/share/saturni-rag/uninstall.sh
-```
+For example:
 
-Remove the application and indexed data:
+    v1.2.0
 
-```bash
-~/.local/share/saturni-rag/uninstall.sh --purge
-```
+The release pipeline verifies:
 
-## Security and answer quality
+    Git tag
+       ↓
+    Package version
+       ↓
+    CHANGELOG entry
+       ↓
+    Ruff
+       ↓
+    Tests
+       ↓
+    Build
+       ↓
+    Distribution validation
+       ↓
+    Wheel installation
+       ↓
+    SHA-256 checksums
+       ↓
+    GitHub Release
 
-Retrieved documents are untrusted input. Saturni instructs the selected language model to answer from the retrieved passages, but generated answers may still be incomplete or incorrect. Review the displayed sources and similarity scores before relying on an answer for important research or decisions.
+A release is not published unless the release checks succeed.
 
-Security reports should follow [SECURITY.md](SECURITY.md).
+---
 
-## Author
+## 📁 Project Structure
 
-**Jeremy Franklin**  
-GitHub: [@iamrichmack111](https://github.com/iamrichmack111)
+Simplified repository structure:
 
-## License
+    saturni-rag/
+    │
+    ├── .github/
+    │   └── workflows/
+    │
+    ├── src/
+    │   └── saturni_rag/
+    │       ├── __init__.py
+    │       ├── cli.py
+    │       └── core.py
+    │
+    ├── scripts/
+    │   ├── quality-gate
+    │   └── richmack-metrics
+    │
+    ├── tests/
+    ├── test_citation_integrity.py
+    ├── test_retrieval_threshold.py
+    ├── CHANGELOG.md
+    ├── pyproject.toml
+    └── README.md
 
-Released under the [MIT License](LICENSE).
+---
+
+## 🎯 Design Philosophy
+
+### Local First
+
+Your knowledge base and models can remain on hardware you control.
+
+### Retrieval Before Generation
+
+Evidence is selected before the model answers.
+
+### Evidence Over Confidence
+
+A confident model response is not a substitute for relevant retrieved evidence.
+
+### Abstention Over Guessing
+
+Weak retrieval should produce no answer rather than an unsupported answer.
+
+### Deterministic Citations
+
+Citation integrity should be controlled by software rather than trusted entirely to generation.
+
+### Test the Retrieval Layer
+
+RAG quality depends on more than whether an LLM can generate fluent text.
+
+Retrieval, ranking, filtering, citations, document updates, and runtime failure modes all need testing.
+
+### Automation Over Memory
+
+If a release requirement matters, it should be checked automatically.
+
+---
+
+## 🪐 Saturni RAG v1.2.0
+
+Version 1.2.0 represents a shift from a basic local RAG application toward a more hardened retrieval system.
+
+The release adds stronger retrieval controls, diversified evidence selection, similarity filtering, deterministic citation handling, runtime hardening, broader automated testing, engineering metrics, multi-version CI, package validation, and automated releases.
+
+Current verified local release state:
+
+    Ruff                PASS
+    Tests               21/21 PASS
+    Quality Gate        PASS
+    Engineering Index   8.3/10
+    Richmack Weissman   9.1/10
+
+---
+
+## 👤 Author
+
+**Jeremy Franklin**
+
+GitHub: `iamrichmack111`
+
+---
+
+## 📜 License
+
+See the repository license for usage and distribution terms.
