@@ -21,6 +21,9 @@ DEFAULT_GENERATION_MODEL = "gemma2:2b"
 DEFAULT_CHUNK_SIZE = 500
 DEFAULT_OVERLAP = 75
 DEFAULT_TOP_K = 3
+DEFAULT_FETCH_K = 12
+DEFAULT_MIN_SIMILARITY = 0.45
+DEFAULT_MMR_LAMBDA = 0.70
 
 
 class SaturniError(RuntimeError):
@@ -166,19 +169,59 @@ class OllamaClient:
                 raise SaturniError(f"Ollama failed to pull {model}: {error}")
         self.models(refresh=True)
 
-    def embed_many(self, texts: Sequence[str], model: str = DEFAULT_EMBED_MODEL) -> np.ndarray:
+    def embed_many(
+        self,
+        texts: Sequence[str],
+        model: str = DEFAULT_EMBED_MODEL,
+    ) -> np.ndarray:
         if not texts:
             raise SaturniError("No text was supplied for embedding.")
+
         response = self._request(
             "POST",
             "/api/embed",
             json={"model": model, "input": list(texts)},
         )
-        payload = response.json()
+
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise SaturniError(
+                "Ollama embedding response was not valid JSON."
+            ) from exc
+
         embeddings = payload.get("embeddings")
+
         if not embeddings:
-            raise SaturniError("Ollama returned no embeddings.")
-        vectors = np.asarray(embeddings, dtype="float32")
+            raise SaturniError(
+                "Ollama returned no embeddings."
+            )
+
+        vectors = np.asarray(
+            embeddings,
+            dtype="float32",
+        )
+
+        if vectors.ndim != 2:
+            raise SaturniError(
+                "Ollama returned an invalid embedding matrix."
+            )
+
+        if vectors.shape[0] != len(texts):
+            raise SaturniError(
+                "Ollama returned an invalid embedding matrix."
+            )
+
+        if vectors.shape[1] == 0:
+            raise SaturniError(
+                "Ollama returned an empty embedding vector."
+            )
+
+        if not np.isfinite(vectors).all():
+            raise SaturniError(
+                "Ollama returned invalid embedding values."
+            )
+
         faiss.normalize_L2(vectors)
         return vectors
 
@@ -191,22 +234,51 @@ class OllamaClient:
         response = self._request(
             "POST",
             "/api/generate",
-            json={"model": model, "prompt": prompt, "stream": True},
+            json={
+                "model": model,
+                "prompt": prompt,
+                "stream": True,
+            },
             stream=True,
         )
+
         output: list[str] = []
+
         for line in response.iter_lines():
             if not line:
                 continue
-            data = json.loads(line)
+
+            try:
+                data = json.loads(line)
+            except (TypeError, ValueError, json.JSONDecodeError) as exc:
+                raise SaturniError(
+                    "Ollama generation stream returned malformed data."
+                ) from exc
+
             if error := data.get("error"):
-                raise SaturniError(f"Ollama generation failed: {error}")
-            token = str(data.get("response", ""))
+                raise SaturniError(
+                    f"Ollama generation failed: {error}"
+                )
+
+            token = str(
+                data.get("response", "")
+            )
+
             if token:
                 output.append(token)
+
                 if on_token:
                     on_token(token)
-        return "".join(output).strip()
+
+        answer = "".join(output).strip()
+
+        if not answer:
+            raise SaturniError(
+                "Ollama generation returned an empty response."
+            )
+
+        return answer
+
 
 
 class VectorStore:
@@ -339,62 +411,147 @@ class VectorStore:
             )
 
         index, payload = self._load()
-        stored_model = str(payload.get("embedding_model", ""))
-        if stored_model != embedding_model:
+
+        stored = {
+            "embedding_model": str(payload.get("embedding_model", "")),
+            "chunk_size": int(payload.get("chunk_size", -1)),
+            "overlap": int(payload.get("overlap", -1)),
+        }
+
+        requested = {
+            "embedding_model": embedding_model,
+            "chunk_size": chunk_size,
+            "overlap": overlap,
+        }
+
+        if stored != requested:
             raise SaturniError(
-                f"Index uses embedding model '{stored_model}', not '{embedding_model}'. "
-                "Use the stored model or rebuild the index."
+                "Index configuration mismatch. "
+                f"Stored={stored}, requested={requested}. "
+                "Use the stored settings or rebuild the index."
             )
+
         metadata = payload["chunks"]
         assert isinstance(metadata, list)
-        known_hashes = {str(item.get("sha256", "")) for item in metadata}
-        new_metadata: list[dict[str, object]] = []
-        texts: list[str] = []
+
         skipped: list[str] = []
+        changed: dict[str, tuple[Path, str]] = {}
+
+        for file_path in files:
+            resolved = file_path.resolve()
+            source_id = str(resolved)
+            file_hash = sha256_file(resolved)
+
+            existing = [
+                item
+                for item in metadata
+                if str(item.get("source", "")) == source_id
+            ]
+
+            if existing and all(
+                str(item.get("sha256", "")) == file_hash
+                for item in existing
+            ):
+                skipped.append(resolved.name)
+                continue
+
+            changed[source_id] = (resolved, file_hash)
+
+        if not changed:
+            return 0, skipped
+
+        retained_metadata: list[dict[str, object]] = []
+        retained_vectors: list[np.ndarray] = []
+
+        for position, item in enumerate(metadata):
+            source_id = str(item.get("source", ""))
+
+            if source_id in changed:
+                continue
+
+            retained_metadata.append(item)
+            retained_vectors.append(
+                np.asarray(
+                    index.reconstruct(position),
+                    dtype="float32",
+                ).reshape(1, -1)
+            )
+
+        new_metadata: list[dict[str, object]] = []
+        new_texts: list[str] = []
 
         client.ensure_model(embedding_model, progress=progress)
-        for file_path in files:
-            file_hash = sha256_file(file_path)
-            if file_hash in known_hashes:
-                skipped.append(file_path.name)
-                continue
+
+        for source_id, (file_path, file_hash) in changed.items():
             chunks = chunk_words(
-                file_path.read_text(encoding="utf-8", errors="ignore"),
+                file_path.read_text(
+                    encoding="utf-8",
+                    errors="ignore",
+                ),
                 chunk_size,
                 overlap,
             )
+
             for number, chunk in enumerate(chunks, start=1):
                 new_metadata.append(
                     {
-                        "source": str(file_path),
+                        "source": source_id,
                         "source_name": file_path.name,
                         "sha256": file_hash,
                         "chunk_number": number,
                         "text": chunk,
                     }
                 )
-                texts.append(chunk)
+                new_texts.append(chunk)
 
-        if not texts:
-            return 0, skipped
+        new_batches: list[np.ndarray] = []
 
-        vector_batches: list[np.ndarray] = []
-        for start in range(0, len(texts), batch_size):
-            stop = min(start + batch_size, len(texts))
+        for start_pos in range(0, len(new_texts), batch_size):
+            stop = min(start_pos + batch_size, len(new_texts))
+
             if progress:
-                progress(f"Embedding chunks {start + 1}-{stop} of {len(texts)}")
-            vector_batches.append(client.embed_many(texts[start:stop], embedding_model))
+                progress(
+                    f"Embedding chunks {start_pos + 1}-{stop} "
+                    f"of {len(new_texts)}"
+                )
 
-        vectors = np.vstack(vector_batches).astype("float32")
-        if index.d != vectors.shape[1]:
-            raise SaturniError(
-                "Embedding dimensions changed. Rebuild the index using the current embedding model."
+            new_batches.append(
+                client.embed_many(
+                    new_texts[start_pos:stop],
+                    embedding_model,
+                )
             )
-        index.add(vectors)
-        metadata.extend(new_metadata)
-        payload["updated_at"] = datetime.now(timezone.utc).isoformat()
-        payload["chunks"] = metadata
-        self._save(index, payload)
+
+        parts: list[np.ndarray] = []
+
+        if retained_vectors:
+            parts.append(
+                np.vstack(retained_vectors).astype("float32")
+            )
+
+        if new_batches:
+            parts.append(
+                np.vstack(new_batches).astype("float32")
+            )
+
+        if not parts:
+            raise SaturniError(
+                "No chunks remain after updating the index."
+            )
+
+        vectors = np.vstack(parts).astype("float32")
+        faiss.normalize_L2(vectors)
+
+        rebuilt = faiss.IndexFlatIP(vectors.shape[1])
+        rebuilt.add(vectors)
+
+        payload["updated_at"] = datetime.now(
+            timezone.utc
+        ).isoformat()
+        payload["chunks"] = retained_metadata + new_metadata
+
+        self._save(rebuilt, payload)
+
         return len(new_metadata), skipped
 
     def search(
@@ -403,52 +560,221 @@ class VectorStore:
         client: OllamaClient,
         embedding_model: str = DEFAULT_EMBED_MODEL,
         top_k: int = DEFAULT_TOP_K,
+        min_similarity: float = DEFAULT_MIN_SIMILARITY,
+        strategy: str = "mmr",
+        fetch_k: int = DEFAULT_FETCH_K,
+        lambda_mult: float = DEFAULT_MMR_LAMBDA,
     ) -> list[RetrievedChunk]:
         if top_k <= 0:
             raise SaturniError("top-k must be greater than zero.")
+
+        if strategy not in {"dense", "mmr"}:
+            raise SaturniError(
+                "retrieval strategy must be 'dense' or 'mmr'."
+            )
+
+        if not 0.0 <= lambda_mult <= 1.0:
+            raise SaturniError(
+                "MMR lambda must be between 0 and 1."
+            )
+
         index, payload = self._load()
+
         stored_model = str(payload.get("embedding_model", ""))
+
         if stored_model != embedding_model:
             raise SaturniError(
-                f"Index uses embedding model '{stored_model}', not '{embedding_model}'. "
+                f"Index uses embedding model '{stored_model}', "
+                f"not '{embedding_model}'. "
                 "Use the stored model or rebuild the index."
             )
+
         metadata = payload["chunks"]
         assert isinstance(metadata, list)
-        client.ensure_model(embedding_model)
-        query_vector = client.embed_many([question], embedding_model)
-        count = min(top_k, index.ntotal)
-        scores, indices = index.search(query_vector, count)
 
-        results: list[RetrievedChunk] = []
-        for score, index_position in zip(scores[0], indices[0], strict=True):
+        client.ensure_model(embedding_model)
+
+        query_vector = client.embed_many(
+            [question],
+            embedding_model,
+        )
+
+        candidate_count = (
+            max(top_k, fetch_k)
+            if strategy == "mmr"
+            else top_k
+        )
+
+        count = min(candidate_count, index.ntotal)
+
+        scores, indices = index.search(
+            query_vector,
+            count,
+        )
+
+        candidates: list[dict[str, object]] = []
+
+        for score, index_position in zip(
+            scores[0],
+            indices[0],
+            strict=True,
+        ):
             if index_position < 0:
                 continue
+
+            similarity = float(score)
+
+            if similarity < min_similarity:
+                continue
+
             item = metadata[int(index_position)]
-            results.append(
-                RetrievedChunk(
-                    source=str(item.get("source_name") or item.get("source")),
-                    text=str(item["text"]),
-                    chunk_number=int(item.get("chunk_number", 0)),
-                    score=float(score),
-                )
+
+            candidates.append(
+                {
+                    "position": int(index_position),
+                    "source": str(
+                        item.get("source_name")
+                        or item.get("source")
+                    ),
+                    "text": str(item["text"]),
+                    "chunk_number": int(
+                        item.get("chunk_number", 0)
+                    ),
+                    "score": similarity,
+                }
             )
-        return results
+
+        if strategy == "dense":
+            chosen = candidates[:top_k]
+
+        else:
+            selected: list[dict[str, object]] = []
+            remaining = list(candidates)
+
+            while remaining and len(selected) < top_k:
+                if not selected:
+                    best = max(
+                        remaining,
+                        key=lambda item: float(item["score"]),
+                    )
+                else:
+                    def mmr_score(item: dict[str, object]) -> float:
+                        vector = np.asarray(
+                            index.reconstruct(
+                                int(item["position"])
+                            ),
+                            dtype="float32",
+                        )
+
+                        redundancy = max(
+                            float(
+                                np.dot(
+                                    vector,
+                                    np.asarray(
+                                        index.reconstruct(
+                                            int(other["position"])
+                                        ),
+                                        dtype="float32",
+                                    ),
+                                )
+                            )
+                            for other in selected
+                        )
+
+                        same_source = any(
+                            item["source"] == other["source"]
+                            for other in selected
+                        )
+
+                        source_penalty = (
+                            0.10 if same_source else 0.0
+                        )
+
+                        return (
+                            lambda_mult * float(item["score"])
+                            - (1.0 - lambda_mult) * redundancy
+                            - source_penalty
+                        )
+
+                    best = max(remaining, key=mmr_score)
+
+                selected.append(best)
+                remaining.remove(best)
+
+            chosen = selected
+
+        return [
+            RetrievedChunk(
+                source=str(item["source"]),
+                text=str(item["text"]),
+                chunk_number=int(item["chunk_number"]),
+                score=float(item["score"]),
+            )
+            for item in chosen
+        ]
 
 
-def build_prompt(question: str, chunks: Iterable[RetrievedChunk]) -> str:
+
+def build_prompt(
+    question: str,
+    chunks: Iterable[RetrievedChunk],
+) -> str:
     context_sections = []
+
     for number, chunk in enumerate(chunks, start=1):
         context_sections.append(
-            f"[{number}] Source: {chunk.source}, chunk {chunk.chunk_number}\n{chunk.text}"
+            f"[CITE {number}]\n"
+            f"Source: {chunk.source}\n"
+            f"Chunk: {chunk.chunk_number}\n"
+            f"Similarity: {chunk.score:.4f}\n"
+            f"{chunk.text}"
         )
+
     context = "\n\n".join(context_sections)
+
     return (
-        "You are Saturni, a careful research assistant. Answer only from the supplied context. "
-        "Cite supporting passages with bracketed source numbers such as [1] or [2]. "
-        "If the context does not contain enough evidence, say so clearly.\n\n"
-        f"Context:\n{context}\n\nQuestion: {question}\nAnswer:"
+        "You are Saturni, a careful retrieval-grounded research assistant.\n"
+        "Answer only from the supplied context.\n"
+        "Use only Saturni citation identifiers that appear in the context, "
+        "such as [CITE 1] or [CITE 2].\n"
+        "Do not invent citation identifiers.\n"
+        "If the context does not contain enough evidence, say exactly: "
+        "Not found in text.\n\n"
+        f"Context:\n{context}\n\n"
+        f"Question: {question}\n"
+        "Answer:"
     )
+
+
+def sanitize_citations(answer: str, valid_count: int) -> str:
+    import re
+
+    valid = set(range(1, valid_count + 1))
+
+    def replace(match: re.Match[str]) -> str:
+        number = int(match.group(1))
+        return match.group(0) if number in valid else ""
+
+    return re.sub(
+        r"\[CITE\s+(\d+)\]",
+        replace,
+        answer,
+    ).strip()
+
+
+def format_sources(
+    chunks: Sequence[RetrievedChunk],
+) -> str:
+    lines = ["Sources:"]
+
+    for number, chunk in enumerate(chunks, start=1):
+        lines.append(
+            f"[CITE {number}] {chunk.source} "
+            f"| chunk={chunk.chunk_number} "
+            f"| similarity={chunk.score:.4f}"
+        )
+
+    return "\n".join(lines)
 
 
 def answer_question(
@@ -458,12 +784,43 @@ def answer_question(
     model: str = DEFAULT_GENERATION_MODEL,
     embedding_model: str = DEFAULT_EMBED_MODEL,
     top_k: int = DEFAULT_TOP_K,
+    min_similarity: float = DEFAULT_MIN_SIMILARITY,
+    retrieval: str = "mmr",
+    fetch_k: int = DEFAULT_FETCH_K,
+    lambda_mult: float = DEFAULT_MMR_LAMBDA,
     on_token: Callable[[str], None] | None = None,
 ) -> tuple[str, list[RetrievedChunk]]:
-    chunks = store.search(question, client, embedding_model, top_k)
+    chunks = store.search(
+        question,
+        client,
+        embedding_model,
+        top_k,
+        min_similarity=min_similarity,
+        strategy=retrieval,
+        fetch_k=fetch_k,
+        lambda_mult=lambda_mult,
+    )
+
+    if not chunks:
+        return "Not found in text.", []
+
     client.ensure_model(model)
-    answer = client.generate(build_prompt(question, chunks), model, on_token=on_token)
-    return answer, chunks
+
+    answer = client.generate(
+        build_prompt(question, chunks),
+        model,
+        on_token=on_token,
+    )
+
+    answer = sanitize_citations(
+        answer,
+        len(chunks),
+    )
+
+    return (
+        f"{answer}\n\n{format_sources(chunks)}",
+        chunks,
+    )
 
 
 def ollama_binary_available() -> bool:

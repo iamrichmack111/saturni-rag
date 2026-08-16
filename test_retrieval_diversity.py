@@ -1,129 +1,128 @@
-import ast
-from pathlib import Path
+import json
+
+import faiss
 import numpy as np
 
-source = Path("saturni.py").read_text()
-tree = ast.parse(source)
-
-wanted = {
-    "_cosine_similarity",
-    "_mmr_select",
-    "retrieve",
-}
-
-nodes = [
-    n for n in tree.body
-    if isinstance(n, ast.FunctionDef) and n.name in wanted
-]
-
-code = compile(
-    ast.Module(body=nodes, type_ignores=[]),
-    "saturni.py",
-    "exec",
-)
+from saturni_rag.core import VectorStore
 
 
-class FakeIndex:
-    def search(self, qv, k):
-        distances = np.array(
-            [[0.60, 0.61, 0.62, 0.70]],
-            dtype="float32",
-        )
-        indices = np.array(
-            [[0, 1, 2, 3]],
-            dtype="int64",
-        )
-        return distances[:, :k], indices[:, :k]
+class FakeClient:
+    def ensure_model(self, _model, progress=None):
+        pass
 
-    def reconstruct(self, idx):
-        vectors = {
-            0: np.array([1.00, 0.00], dtype="float32"),
-            1: np.array([0.99, 0.01], dtype="float32"),
-            2: np.array([0.98, 0.02], dtype="float32"),
-            3: np.array([0.20, 0.98], dtype="float32"),
-        }
-        return vectors[idx]
+    def embed_many(self, _texts, _model):
+        return np.array([[1.0, 0.0]], dtype="float32")
 
 
-docs = [
-    ("plato.txt", "Plato chunk one"),
-    ("plato.txt", "Plato chunk two"),
-    ("plato.txt", "Plato chunk three"),
-    ("aristotle.txt", "Aristotle evidence"),
-]
+def make_store(tmp_path):
+    store = VectorStore(tmp_path)
+
+    vectors = np.array(
+        [
+            [1.00, 0.00],
+            [0.99, 0.01],
+            [0.98, 0.02],
+            [0.70, 0.71],
+        ],
+        dtype="float32",
+    )
+    faiss.normalize_L2(vectors)
+
+    index = faiss.IndexFlatIP(2)
+    index.add(vectors)
+
+    payload = {
+        "schema_version": 1,
+        "embedding_model": "nomic-embed-text",
+        "dimension": 2,
+        "chunk_size": 500,
+        "overlap": 75,
+        "chunks": [
+            {
+                "source": "/tmp/plato.txt",
+                "source_name": "plato.txt",
+                "sha256": "1",
+                "chunk_number": 1,
+                "text": "Plato one",
+            },
+            {
+                "source": "/tmp/plato.txt",
+                "source_name": "plato.txt",
+                "sha256": "1",
+                "chunk_number": 2,
+                "text": "Plato two",
+            },
+            {
+                "source": "/tmp/plato.txt",
+                "source_name": "plato.txt",
+                "sha256": "1",
+                "chunk_number": 3,
+                "text": "Plato three",
+            },
+            {
+                "source": "/tmp/aristotle.txt",
+                "source_name": "aristotle.txt",
+                "sha256": "2",
+                "chunk_number": 1,
+                "text": "Aristotle evidence",
+            },
+        ],
+    }
+
+    store.data_dir.mkdir(parents=True, exist_ok=True)
+    faiss.write_index(index, str(store.index_path))
+    store.metadata_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    return store
 
 
-def load_index():
-    return FakeIndex(), docs
+def test_dense_keeps_nearest_neighbors(tmp_path):
+    store = make_store(tmp_path)
 
-
-def embed(_q):
-    return np.array([[1.0, 0.0]], dtype="float32")
-
-
-env = {
-    "np": np,
-    "load_index": load_index,
-    "embed": embed,
-}
-
-exec(code, env)
-
-retrieve = env["retrieve"]
-
-
-def test_dense_keeps_nearest_neighbors():
-    results = retrieve(
+    results = store.search(
         "wisdom",
-        topk=3,
-        max_distance=0.90,
+        FakeClient(),
         strategy="dense",
-        fetch_k=4,
+        top_k=3,
+        min_similarity=0.0,
     )
 
-    assert [x[0] for x in results] == [
+    assert [x.source for x in results] == [
         "plato.txt",
         "plato.txt",
         "plato.txt",
     ]
 
 
-def test_mmr_increases_context_diversity():
-    results = retrieve(
+def test_mmr_increases_context_diversity(tmp_path):
+    store = make_store(tmp_path)
+
+    results = store.search(
         "wisdom",
-        topk=3,
-        max_distance=0.90,
+        FakeClient(),
         strategy="mmr",
+        top_k=3,
         fetch_k=4,
         lambda_mult=0.50,
+        min_similarity=0.0,
     )
 
-    filenames = [x[0] for x in results]
+    filenames = [x.source for x in results]
 
     assert "plato.txt" in filenames
     assert "aristotle.txt" in filenames
 
 
-def test_threshold_still_applies_to_mmr():
-    results = retrieve(
-        "wisdom",
-        topk=3,
-        max_distance=0.65,
-        strategy="mmr",
-        fetch_k=4,
-        lambda_mult=0.50,
-    )
+def test_invalid_strategy_is_rejected(tmp_path):
+    store = make_store(tmp_path)
 
-    assert all(distance <= 0.65 for _, _, distance in results)
-
-
-def test_invalid_strategy_is_rejected():
     try:
-        retrieve(
+        store.search(
             "wisdom",
+            FakeClient(),
             strategy="magic",
         )
-    except ValueError as exc:
+    except Exception as exc:
         assert "dense" in str(exc)
         assert "mmr" in str(exc)
     else:

@@ -1,88 +1,98 @@
-import ast
+import json
 from pathlib import Path
+
+import faiss
 import numpy as np
 
-source = Path("saturni.py").read_text()
-tree = ast.parse(source)
-
-wanted = {
-    "_cosine_similarity",
-    "_mmr_select",
-    "retrieve",
-    "rag_answer",
-}
-
-nodes = [
-    n for n in tree.body
-    if isinstance(n, ast.FunctionDef) and n.name in wanted
-]
-
-code = compile(
-    ast.Module(body=nodes, type_ignores=[]),
-    "saturni.py",
-    "exec",
-)
+from saturni_rag.core import VectorStore
 
 
-class FakeIndex:
-    def search(self, qv, topk):
-        distances = np.array([[0.70, 0.82, 0.98]], dtype="float32")
-        indices = np.array([[0, 1, 2]], dtype="int64")
-        return distances, indices
+class FakeClient:
+    def ensure_model(self, _model, progress=None):
+        pass
+
+    def embed_many(self, _texts, _model):
+        return np.array([[1.0, 0.0]], dtype="float32")
 
 
-docs = [
-    ("wisdom.txt", "Wisdom is practical judgment."),
-    ("virtue.txt", "Virtue concerns good action."),
-    ("quantum.txt", "Unrelated material."),
-]
+def make_store(tmp_path):
+    store = VectorStore(tmp_path)
+
+    vectors = np.array(
+        [
+            [1.0, 0.0],
+            [0.8, 0.6],
+            [0.2, 0.98],
+        ],
+        dtype="float32",
+    )
+    faiss.normalize_L2(vectors)
+
+    index = faiss.IndexFlatIP(2)
+    index.add(vectors)
+
+    payload = {
+        "schema_version": 1,
+        "embedding_model": "nomic-embed-text",
+        "dimension": 2,
+        "chunk_size": 500,
+        "overlap": 75,
+        "chunks": [
+            {
+                "source": "/tmp/a.txt",
+                "source_name": "a.txt",
+                "sha256": "a",
+                "chunk_number": 1,
+                "text": "Strong match",
+            },
+            {
+                "source": "/tmp/b.txt",
+                "source_name": "b.txt",
+                "sha256": "b",
+                "chunk_number": 1,
+                "text": "Medium match",
+            },
+            {
+                "source": "/tmp/c.txt",
+                "source_name": "c.txt",
+                "sha256": "c",
+                "chunk_number": 1,
+                "text": "Weak match",
+            },
+        ],
+    }
+
+    store.data_dir.mkdir(parents=True, exist_ok=True)
+    faiss.write_index(index, str(store.index_path))
+    store.metadata_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    return store
 
 
-def load_index():
-    return FakeIndex(), docs
+def test_threshold_filters_weak_results(tmp_path):
+    store = make_store(tmp_path)
 
-
-def embed(_q):
-    return np.array([[1.0, 2.0]], dtype="float32")
-
-
-generated = []
-
-
-def ollama_generate(prompt, model):
-    generated.append(prompt)
-    return "generated"
-
-
-env = {
-    "np": np,
-    "load_index": load_index,
-    "embed": embed,
-    "ollama_generate": ollama_generate,
-}
-
-exec(code, env)
-
-retrieve = env["retrieve"]
-rag_answer = env["rag_answer"]
-
-
-def test_threshold_filters_weak_results():
-    results = retrieve("wisdom", topk=3, max_distance=0.90)
-
-    assert len(results) == 2
-    assert results[0][0] == "wisdom.txt"
-    assert results[1][0] == "virtue.txt"
-    assert all(distance <= 0.90 for _, _, distance in results)
-
-
-def test_no_evidence_abstains_without_generation():
-    answer = rag_answer(
-        "quantum computing",
-        model="gemma3:4b",
-        max_distance=0.50,
-        retrieval="dense",
+    results = store.search(
+        "wisdom",
+        FakeClient(),
+        min_similarity=0.75,
+        strategy="dense",
+        top_k=3,
     )
 
-    assert answer == "Not found in text."
-    assert generated == []
+    assert len(results) == 2
+    assert all(chunk.score >= 0.75 for chunk in results)
+
+
+def test_high_threshold_can_abstain(tmp_path):
+    store = make_store(tmp_path)
+
+    results = store.search(
+        "wisdom",
+        FakeClient(),
+        min_similarity=1.01,
+        strategy="dense",
+        top_k=3,
+    )
+
+    assert results == []

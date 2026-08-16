@@ -7,11 +7,24 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 SOURCE_FILES = [
-    p for p in ROOT.glob("*.py")
-    if not p.name.startswith("test_")
+    ROOT / "saturni.py",
+    *sorted((ROOT / "src" / "saturni_rag").glob("*.py")),
 ]
 
-TEST_FILES = list(ROOT.glob("test_*.py"))
+SOURCE_FILES = [
+    p for p in SOURCE_FILES
+    if p.is_file()
+]
+
+TEST_FILES = [
+    *sorted((ROOT / "tests").glob("test_*.py")),
+    *sorted(ROOT.glob("test_*.py")),
+]
+
+TEST_FILES = [
+    p for p in TEST_FILES
+    if p.is_file()
+]
 
 def lines(paths):
     return sum(len(p.read_text(errors="ignore").splitlines()) for p in paths)

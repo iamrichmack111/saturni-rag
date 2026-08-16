@@ -65,8 +65,10 @@ def test_build_prompt_requests_numbered_citations():
         "What is virtue?",
         [RetrievedChunk("plato.txt", "Virtue is discussed here.", 2, 0.9)],
     )
-    assert "[1] Source: plato.txt" in prompt
-    assert "Cite supporting passages" in prompt
+    assert "[CITE 1]" in prompt
+    assert "Source: plato.txt" in prompt
+    assert "Use only Saturni citation identifiers" in prompt
+    assert "Do not invent citation identifiers" in prompt
 
 
 def test_normalize_ollama_url_adds_scheme():

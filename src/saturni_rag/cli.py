@@ -21,6 +21,9 @@ from saturni_rag.core import (
     DEFAULT_GENERATION_MODEL,
     DEFAULT_OVERLAP,
     DEFAULT_TOP_K,
+    DEFAULT_FETCH_K,
+    DEFAULT_MIN_SIMILARITY,
+    DEFAULT_MMR_LAMBDA,
     OllamaClient,
     OllamaUnavailableError,
     SaturniError,
@@ -125,6 +128,30 @@ def add_answer_options(parser: argparse.ArgumentParser) -> None:
         help="Choose an installed Ollama model from an interactive menu",
     )
     parser.add_argument("--top-k", type=int, default=DEFAULT_TOP_K)
+    parser.add_argument(
+        "--min-similarity",
+        type=float,
+        default=DEFAULT_MIN_SIMILARITY,
+        help="Minimum cosine similarity required for retrieval",
+    )
+    parser.add_argument(
+        "--retrieval",
+        choices=["dense", "mmr"],
+        default="mmr",
+        help="Retrieval strategy (default: mmr)",
+    )
+    parser.add_argument(
+        "--fetch-k",
+        type=int,
+        default=DEFAULT_FETCH_K,
+        help="MMR candidate pool size",
+    )
+    parser.add_argument(
+        "--lambda-mult",
+        type=float,
+        default=DEFAULT_MMR_LAMBDA,
+        help="MMR relevance weight from 0 to 1",
+    )
     parser.add_argument("--show-sources", action="store_true")
     parser.add_argument(
         "-o",
@@ -252,7 +279,7 @@ def print_sources(chunks: list[object]) -> None:
     print(colored("\nSources", "yellow"))
     for number, chunk in enumerate(chunks, start=1):
         print(
-            f"[{number}] {chunk.source} · chunk {chunk.chunk_number} "
+            f"[CITE {number}] {chunk.source} · chunk {chunk.chunk_number} "
             f"· similarity {chunk.score:.3f}"
         )
 
@@ -277,6 +304,10 @@ def ask_once(
             model=args.model,
             embedding_model=args.embedding_model,
             top_k=args.top_k,
+            min_similarity=args.min_similarity,
+            retrieval=args.retrieval,
+            fetch_k=args.fetch_k,
+            lambda_mult=args.lambda_mult,
             on_token=lambda _token: generation_bar.update(1),
         )
     finally:

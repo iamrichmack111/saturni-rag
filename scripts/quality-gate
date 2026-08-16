@@ -1,19 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+export PYTHONPATH="${PYTHONPATH:-}:src"
+
 echo "=============================================================="
 echo "SATURNI QUALITY GATE"
 echo "=============================================================="
 
 echo
 echo "1. Syntax"
-python -m py_compile saturni.py
-python -m py_compile rag_embed.py
+python -m py_compile   saturni.py   src/saturni_rag/__init__.py   src/saturni_rag/core.py   src/saturni_rag/cli.py
 echo "PASS: syntax"
 
 echo
 echo "2. Tests"
-python -m pytest -q
+python -m pytest   tests   test_citation_integrity.py   test_retrieval_diversity.py   test_retrieval_threshold.py   test_runtime_hardening.py   -q
 
 echo
 echo "3. Metrics JSON"
