@@ -20,9 +20,42 @@ def ensure_ollama_model(model_name):
 # --- Embedding with Ollama ---
 def embed(text):
     ensure_ollama_model(EMBED_MODEL)
-    resp = requests.post("http://localhost:11434/api/embed",
-        json={"model": EMBED_MODEL, "input": text}).json()
-    return np.array(resp["embeddings"][0], dtype="float32").reshape(1,-1)
+
+    try:
+        resp = requests.post(
+            "http://localhost:11434/api/embed",
+            json={"model": EMBED_MODEL, "input": text},
+            timeout=60,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    except requests.RequestException as exc:
+        raise RuntimeError(
+            f"Ollama embedding request failed: {exc}"
+        ) from exc
+    except ValueError as exc:
+        raise RuntimeError(
+            "Ollama embedding returned invalid JSON"
+        ) from exc
+
+    embeddings = data.get("embeddings")
+
+    if not embeddings or not embeddings[0]:
+        raise RuntimeError(
+            f"Ollama embedding response missing vectors: {data}"
+        )
+
+    vector = np.array(
+        embeddings[0],
+        dtype="float32",
+    ).reshape(1, -1)
+
+    if vector.shape[1] == 0:
+        raise RuntimeError(
+            "Ollama embedding returned an empty vector"
+        )
+
+    return vector
 
 # --- Helpers ---
 def find_text_files():
@@ -65,8 +98,37 @@ def validate_index_config():
 # --- FAISS Index ---
 def load_index():
     if not os.path.exists(INDEX_FILE) or not os.path.exists(META_FILE):
-        raise RuntimeError("❌ No index found. Run with --index first.")
-    return faiss.read_index(INDEX_FILE), pickle.load(open(META_FILE,"rb"))
+        raise RuntimeError(
+            "❌ No index found. Run with --index first."
+        )
+
+    try:
+        index = faiss.read_index(INDEX_FILE)
+    except Exception as exc:
+        raise RuntimeError(
+            f"Failed to read FAISS index: {INDEX_FILE}"
+        ) from exc
+
+    try:
+        with open(META_FILE, "rb") as f:
+            docs = pickle.load(f)
+    except Exception as exc:
+        raise RuntimeError(
+            f"Failed to read metadata: {META_FILE}"
+        ) from exc
+
+    if not isinstance(docs, list):
+        raise RuntimeError(
+            "Metadata is invalid: expected a list of chunks"
+        )
+
+    if index.ntotal != len(docs):
+        raise RuntimeError(
+            "FAISS/metadata mismatch: "
+            f"{index.ntotal} vectors vs {len(docs)} metadata rows"
+        )
+
+    return index, docs
 
 def build_index():
     files = find_text_files()
@@ -253,21 +315,55 @@ def retrieve(
 
 
 # --- Ollama LLM Answer (with progress bar) ---
-def ollama_generate(prompt, model="gemma2:2b"):
+def ollama_generate(prompt, model="gemma3:4b"):
     ensure_ollama_model(model)
-    resp = requests.post("http://localhost:11434/api/generate",
-        json={"model": model, "prompt": prompt}, stream=True)
+
+    try:
+        resp = requests.post(
+            "http://localhost:11434/api/generate",
+            json={"model": model, "prompt": prompt},
+            stream=True,
+            timeout=120,
+        )
+        resp.raise_for_status()
+    except requests.RequestException as exc:
+        raise RuntimeError(
+            f"Ollama generation request failed: {exc}"
+        ) from exc
+
     out = ""
+
     with tqdm(desc="Generating answer", unit="chunk") as pbar:
         for line in resp.iter_lines():
-            if line:
-                try:
-                    data = json.loads(line.decode("utf-8"))
-                    if "response" in data:
-                        out += data["response"]
-                        pbar.update(1)
-                except:
-                    pass
+            if not line:
+                continue
+
+            try:
+                data = json.loads(
+                    line.decode("utf-8")
+                )
+            except (
+                UnicodeDecodeError,
+                json.JSONDecodeError,
+            ) as exc:
+                raise RuntimeError(
+                    "Ollama generation stream returned malformed data"
+                ) from exc
+
+            if "error" in data:
+                raise RuntimeError(
+                    f"Ollama generation failed: {data['error']}"
+                )
+
+            if "response" in data:
+                out += data["response"]
+                pbar.update(1)
+
+    if not out.strip():
+        raise RuntimeError(
+            "Ollama generation returned an empty response"
+        )
+
     return out.strip()
 
 def sanitize_citations(answer, valid_ids):
