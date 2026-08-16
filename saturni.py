@@ -140,11 +140,20 @@ def add_files(files):
             "yellow"
         ))
 
-def retrieve(q, topk=3):
+def retrieve(q, topk=3, max_distance=0.90):
     index, docs = load_index()
     qv = embed(q).astype("float32")
-    D,I = index.search(qv, topk)
-    return [docs[idx] for idx in I[0]]
+    D, I = index.search(qv, topk)
+
+    results = []
+    for distance, idx in zip(D[0], I[0]):
+        if idx < 0:
+            continue
+        if float(distance) <= max_distance:
+            fname, chunk = docs[idx]
+            results.append((fname, chunk, float(distance)))
+
+    return results
 
 # --- Ollama LLM Answer (with progress bar) ---
 def ollama_generate(prompt, model="gemma2:2b"):
@@ -164,10 +173,23 @@ def ollama_generate(prompt, model="gemma2:2b"):
                     pass
     return out.strip()
 
-def rag_answer(q, model="gemma2:2b"):
-    ctx = retrieve(q, topk=3)
-    context_text = "\n\n".join([f"From {fname}:\n{chunk}" for fname, chunk in ctx])
-    prompt = f"Answer the question using only the context below.\n\nContext:\n{context_text}\n\nQuestion: {q}\nAnswer:"
+def rag_answer(q, model="gemma2:2b", max_distance=0.90):
+    ctx = retrieve(q, topk=3, max_distance=max_distance)
+
+    if not ctx:
+        return "Not found in text."
+
+    context_text = "\n\n".join(
+        f"From {fname} [distance={distance:.4f}]:\n{chunk}"
+        for fname, chunk, distance in ctx
+    )
+
+    prompt = (
+        "Answer the question using only the context below. "
+        "If the context does not support the answer, say: Not found in text.\n\n"
+        f"Context:\n{context_text}\n\nQuestion: {q}\nAnswer:"
+    )
+
     return ollama_generate(prompt, model=model)
 
 # --- CLI Modes ---
@@ -179,12 +201,12 @@ def output_result(question, answer, output_file=None):
             f.write(f"👉 {answer}\n\n")
         print(colored(f"💾 Appended Q&A to {output_file}", "cyan"))
 
-def repl(ai_model, output_file=None):
+def repl(ai_model, output_file=None, max_distance=0.90):
     print(colored(f"💬 Ask questions (AI model = {ai_model}, type 'exit' to quit)\n","magenta"))
     while True:
         q = input(colored("❓ Ask> ", "blue"))
         if q.lower() in {"exit","quit"}: break
-        ans = rag_answer(q, model=ai_model)
+        ans = rag_answer(q, model=ai_model, max_distance=max_distance)
         output_result(q, ans, output_file)
 
 if __name__=="__main__":
@@ -194,13 +216,15 @@ if __name__=="__main__":
     ap.add_argument("--repl", action="store_true", help="Interactive query mode")
     ap.add_argument("--query", type=str, help="One-shot query")
     ap.add_argument("--ai", type=str, default="gemma2:2b", help="Ollama model for answers (default gemma2:2b)")
+    ap.add_argument("--max-distance", type=float, default=0.90,
+                    help="Maximum FAISS L2 retrieval distance (lower is better; default 0.90)")
     ap.add_argument("-o", "--output", type=str, help="Append Q&A transcript to file")
     args = ap.parse_args()
 
     if args.index: build_index()
     if args.add: add_files(args.add)
-    if args.repl: repl(args.ai, args.output)
+    if args.repl: repl(args.ai, args.output, args.max_distance)
     if args.query:
-        ans = rag_answer(args.query, model=args.ai)
+        ans = rag_answer(args.query, model=args.ai, max_distance=args.max_distance)
         output_result(args.query, ans, args.output)
 
