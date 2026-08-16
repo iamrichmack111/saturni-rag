@@ -101,7 +101,30 @@ release_tags = tags()
 testing = min(10, 3 + ratio / 8)
 complexity_score = max(0, 10 - max(0, cx["average"] - 3) * 0.8 - cx["long_functions"] * 0.25)
 maintainability = min(10, 5 + testing * 0.25 + complexity_score * 0.25)
-automation = 4.0
+workflow_files = (
+    list((ROOT / ".github" / "workflows").glob("*.yml"))
+    + list((ROOT / ".github" / "workflows").glob("*.yaml"))
+)
+
+automation_assets = [
+    ROOT / "scripts" / "quality-gate",
+    ROOT / "scripts" / "richmack-metrics",
+]
+
+automation = 2.0
+
+if workflow_files:
+    automation += 3.0
+
+automation += min(
+    3.0,
+    sum(1.5 for path in automation_assets if path.exists())
+)
+
+if TEST_FILES:
+    automation += 1.0
+
+automation = min(10.0, automation)
 throughput = min(10, 4 + commits / 4)
 technical_debt = max(0, 10 - cx["long_functions"] * 0.35 - cx["syntax_errors"] * 2)
 
@@ -117,9 +140,12 @@ engineering_index = round(
     2
 )
 
-richmack_weissman = round(
-    engineering_index * (1 + min(ratio, 100) / 500),
-    2
+richmack_weissman = min(
+    10.0,
+    round(
+        engineering_index * (1 + min(ratio, 100) / 500),
+        2
+    )
 )
 
 data = {
